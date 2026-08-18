@@ -1,0 +1,6 @@
+{
+  "name": "Smart Coach Engine",
+  "description": "تطبيق المدرب الذكي لمعالجة الأسئلة والملفات وكشف التكرار مع أتمتة n8n وقواعد البيانات",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

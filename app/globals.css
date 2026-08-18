@@ -1,0 +1,174 @@
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800;900&family=Tajawal:wght@300;400;500;700;800;900&display=swap');
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   1. Theme System Definition via CSS Variables
+   --------------------------------------------------------------------------- */
+
+:root {
+  /* Default Base Neutral Light Tokens */
+  --font-sans: 'Cairo', 'Tajawal', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --border: #e2e8f0;
+  --ring: #3b82f6;
+
+  /* Default Theme: Blue (الافتراضي) */
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --primary-light: #eff6ff;
+  --primary-foreground: #ffffff;
+}
+
+/* --- Theme: Blue (الأزرق المعياري) --- */
+.theme-blue {
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --primary-light: #eff6ff;
+  --primary-foreground: #ffffff;
+  --ring: #3b82f6;
+}
+
+/* --- Theme: Emerald (الزمردي التربوي) --- */
+.theme-emerald {
+  --primary: #059669;
+  --primary-hover: #047857;
+  --primary-light: #ecfdf5;
+  --primary-foreground: #ffffff;
+  --ring: #10b981;
+}
+
+/* --- Theme: Violet (البنفسجي الحديث) --- */
+.theme-violet {
+  --primary: #7c3aed;
+  --primary-hover: #6d28d9;
+  --primary-light: #f5f3ff;
+  --primary-foreground: #ffffff;
+  --ring: #8b5cf6;
+}
+
+/* --- Theme: Amber (الكهرماني التحذيري) --- */
+.theme-amber {
+  --primary: #d97706;
+  --primary-hover: #b45309;
+  --primary-light: #fffbeb;
+  --primary-foreground: #ffffff;
+  --ring: #f59e0b;
+}
+
+/* --- Dark Mode Variables Overrides --- */
+.dark {
+  --background: #0f172a;
+  --foreground: #f8fafc;
+  --card: #1e293b;
+  --card-foreground: #f8fafc;
+  --border: #334155;
+  
+  &.theme-blue {
+    --primary-light: #1e3a8a;
+  }
+  &.theme-emerald {
+    --primary-light: #064e3b;
+  }
+  &.theme-violet {
+    --primary-light: #4c1d95;
+  }
+  &.theme-amber {
+    --primary-light: #78350f;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   2. Global Typography & Font Scaling
+   --------------------------------------------------------------------------- */
+
+html {
+  font-family: var(--font-sans);
+  direction: rtl;
+  scroll-behavior: smooth;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+/* Font Size Modifiers */
+.text-scale-sm {
+  font-size: 0.875rem; /* 14px */
+  line-height: 1.5;
+}
+
+.text-scale-md {
+  font-size: 1rem; /* 16px */
+  line-height: 1.6;
+}
+
+.text-scale-lg {
+  font-size: 1.125rem; /* 18px */
+  line-height: 1.7;
+}
+
+/* ---------------------------------------------------------------------------
+   3. Custom Utilities & Dynamic Theme Classes
+   --------------------------------------------------------------------------- */
+
+.bg-app-primary {
+  background-color: var(--primary);
+}
+
+.bg-app-primary-hover:hover {
+  background-color: var(--primary-hover);
+}
+
+.bg-app-primary-light {
+  background-color: var(--primary-light);
+}
+
+.text-app-primary {
+  color: var(--primary);
+}
+
+.border-app-primary {
+  border-color: var(--primary);
+}
+
+.border-app {
+  border-color: var(--border);
+}
+
+.bg-app-card {
+  background-color: var(--card);
+  color: var(--card-foreground);
+}
+
+.ring-app-primary {
+  --tw-ring-color: var(--ring);
+}
+
+/* Custom Scrollbar for Arabic RTL Layout */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--primary);
+}
