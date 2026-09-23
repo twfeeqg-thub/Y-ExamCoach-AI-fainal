@@ -5,6 +5,7 @@ import { useApp } from '@/context/AppContext';
 import { UploadPage } from '@/components/UploadPage';
 import { QuestionsPage } from '@/components/QuestionsPage';
 import { SettingsPage } from '@/components/SettingsPage';
+import { AdaptivePracticePage } from '@/components/AdaptivePracticePage';
 import { SupportToast, triggerSupportToast } from '@/components/SupportToast';
 import {
   PSYCHOLOGICAL_MESSAGES,
@@ -21,10 +22,11 @@ import {
   WifiOff,
   Sparkles,
   Heart,
+  Target,
 } from 'lucide-react';
 
 export default function HomePage() {
-  const [activeTab, setActiveTab] = useState<'upload' | 'questions' | 'settings'>('upload');
+  const [activeTab, setActiveTab] = useState<'upload' | 'questions' | 'practice' | 'settings'>('upload');
   const { stats, settings, updateUserSettings, databaseStatus } = useApp();
   const [quote, setQuote] = useState<string>('');
 
@@ -112,6 +114,18 @@ export default function HomePage() {
             </button>
 
             <button
+              onClick={() => setActiveTab('practice')}
+              className={`px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition cursor-pointer ${
+                activeTab === 'practice'
+                  ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+              }`}
+            >
+              <Target className="w-4 h-4" />
+              <span>تدريب تكيفي</span>
+            </button>
+
+            <button
               onClick={() => setActiveTab('settings')}
               className={`px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition cursor-pointer ${
                 activeTab === 'settings'
@@ -154,6 +168,7 @@ export default function HomePage() {
       <main className="flex-1 py-4 md:py-6">
         {activeTab === 'upload' && <UploadPage />}
         {activeTab === 'questions' && <QuestionsPage />}
+        {activeTab === 'practice' && <AdaptivePracticePage />}
         {activeTab === 'settings' && <SettingsPage />}
       </main>
 
@@ -195,6 +210,18 @@ export default function HomePage() {
             )}
           </div>
           <span className="text-[11px]">بنك الأسئلة</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('practice')}
+          className={`flex-1 py-2 px-1 rounded-xl flex flex-col items-center justify-center gap-1 min-h-[48px] active:scale-95 transition ${
+            activeTab === 'practice'
+              ? 'text-blue-600 dark:text-blue-400 font-bold bg-blue-50 dark:bg-blue-950/60'
+              : 'text-slate-500 dark:text-slate-400 hover:text-slate-800'
+          }`}
+        >
+          <Target className="w-5 h-5" />
+          <span className="text-[11px]">تدريب تكيفي</span>
         </button>
 
         <button

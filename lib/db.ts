@@ -7,6 +7,11 @@ import {
   UploadedFileRow,
   FileInput,
   QuestionInput,
+  CorrectOption,
+  MasteryState,
+  MasteryStateRow,
+  StudentResponse,
+  StudentResponseRow,
   mapQuestionRowToQuestion,
   mapUploadedFileRowToFile,
 } from '../types/index';
@@ -51,6 +56,10 @@ const memFiles: UploadedFile[] = [
     updatedAt: new Date().toISOString(),
   },
 ];
+
+const memMasteryStates: MasteryState[] = [];
+
+const memStudentResponses: StudentResponse[] = [];
 
 const memQuestions: Question[] = [
   {
@@ -275,6 +284,37 @@ export async function ensureSchema(): Promise<void> {
       normalized_text_hash VARCHAR(64) UNIQUE,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS smart_exam_engine.student_profiles (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      grade INT NOT NULL CHECK (grade IN (9, 12)),
+      section TEXT,
+      governorate TEXT,
+      target_subject TEXT,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS smart_exam_engine.mastery_states (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      student_id UUID NOT NULL REFERENCES smart_exam_engine.student_profiles(id) ON DELETE CASCADE,
+      learning_objective_code TEXT NOT NULL,
+      mastery_score NUMERIC(5, 2) DEFAULT 0.00,
+      consecutive_correct INT DEFAULT 0,
+      last_evaluated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(student_id, learning_objective_code)
+    );
+
+    CREATE TABLE IF NOT EXISTS smart_exam_engine.student_responses (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      student_id UUID NOT NULL REFERENCES smart_exam_engine.student_profiles(id) ON DELETE CASCADE,
+      question_id UUID NOT NULL REFERENCES smart_exam_engine.questions(id) ON DELETE CASCADE,
+      learning_objective_code TEXT,
+      selected_option VARCHAR(1),
+      is_correct BOOLEAN NOT NULL,
+      time_taken_seconds INT,
+      hint_used BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     );
   `;
 
@@ -736,5 +776,191 @@ export async function deleteAllQuestions(): Promise<boolean> {
     isInMemoryFallback = true;
     memQuestions.length = 0;
     return true;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Adaptive Engine - Student Response Recording & Mastery Update
+// ---------------------------------------------------------------------------
+
+export async function recordStudentResponse(
+  studentId: string,
+  questionId: string,
+  data: {
+    selectedOption?: CorrectOption | null;
+    isCorrect: boolean;
+    timeTakenSeconds?: number | null;
+    hintUsed?: boolean;
+  }
+): Promise<{ response: StudentResponse; mastery: MasteryState | null }> {
+  const selectedOption = data.selectedOption ?? null;
+  const timeTakenSeconds = data.timeTakenSeconds ?? null;
+  const hintUsed = data.hintUsed ?? false;
+
+  if (isInMemoryFallback) {
+    const objectiveCode = memQuestions.find((q) => q.id === questionId)?.learningObjectiveCode || null;
+
+    const response: StudentResponse = {
+      id: 'sr-' + Math.random().toString(36).substring(2, 9),
+      studentId,
+      questionId,
+      learningObjectiveCode: objectiveCode,
+      selectedOption,
+      isCorrect: data.isCorrect,
+      timeTakenSeconds,
+      hintUsed,
+      createdAt: new Date().toISOString(),
+    };
+    memStudentResponses.unshift(response);
+
+    let mastery = objectiveCode
+      ? memMasteryStates.find((m) => m.studentId === studentId && m.learningObjectiveCode === objectiveCode)
+      : undefined;
+
+    if (objectiveCode) {
+      if (!mastery) {
+        mastery = {
+          id: 'ms-' + Math.random().toString(36).substring(2, 9),
+          studentId,
+          learningObjectiveCode: objectiveCode,
+          masteryScore: 0,
+          consecutiveCorrect: 0,
+        };
+        memMasteryStates.push(mastery);
+      }
+      if (data.isCorrect) {
+        mastery.masteryScore = Math.min(100, mastery.masteryScore + 10);
+        mastery.consecutiveCorrect += 1;
+      } else {
+        mastery.masteryScore = Math.max(0, mastery.masteryScore - 5);
+        mastery.consecutiveCorrect = 0;
+      }
+      mastery.lastEvaluatedAt = new Date().toISOString();
+    }
+
+    return { response, mastery: mastery || null };
+  }
+
+  try {
+    await ensureSchema();
+    const insertSql = `
+      WITH question_obj AS (
+        SELECT learning_objective_code FROM smart_exam_engine.questions WHERE id = $1
+      ),
+      ins AS (
+        INSERT INTO smart_exam_engine.student_responses (
+          student_id, question_id, learning_objective_code,
+          selected_option, is_correct, time_taken_seconds, hint_used
+        )
+        VALUES ($2, $1, (SELECT learning_objective_code FROM question_obj), $3, $4, $5, $6)
+        RETURNING *
+      )
+      SELECT * FROM ins;
+    `;
+    const res = await query(insertSql, [questionId, studentId, selectedOption, data.isCorrect, timeTakenSeconds, hintUsed]);
+    const responseRow = res.rows[0] as StudentResponseRow;
+    const response: StudentResponse = {
+      id: responseRow.id,
+      studentId: responseRow.student_id,
+      questionId: responseRow.question_id,
+      learningObjectiveCode: responseRow.learning_objective_code,
+      selectedOption: responseRow.selected_option,
+      isCorrect: responseRow.is_correct,
+      timeTakenSeconds: responseRow.time_taken_seconds,
+      hintUsed: responseRow.hint_used,
+      createdAt: responseRow.created_at,
+    };
+
+    let mastery: MasteryState | null = null;
+    if (response.learningObjectiveCode) {
+      const masterySql = `
+        INSERT INTO smart_exam_engine.mastery_states (
+          student_id, learning_objective_code, mastery_score, consecutive_correct, last_evaluated_at
+        ) VALUES (
+          $1, $2,
+          CASE WHEN $3 THEN 10.00 ELSE 0.00 END,
+          CASE WHEN $3 THEN 1 ELSE 0 END,
+          NOW()
+        )
+        ON CONFLICT (student_id, learning_objective_code) DO UPDATE SET
+          mastery_score = LEAST(100.00, GREATEST(0.00,
+            mastery_states.mastery_score + CASE WHEN excluded.consecutive_correct > 0 THEN 10.00 ELSE -5.00 END)),
+          consecutive_correct = CASE
+            WHEN excluded.consecutive_correct > 0 THEN mastery_states.consecutive_correct + 1
+            ELSE 0
+          END,
+          last_evaluated_at = NOW()
+        RETURNING *;
+      `;
+      const masteryRes = await query(masterySql, [studentId, response.learningObjectiveCode, response.isCorrect]);
+      const masteryRow = masteryRes.rows[0] as MasteryStateRow;
+      mastery = {
+        id: masteryRow.id,
+        studentId: masteryRow.student_id,
+        learningObjectiveCode: masteryRow.learning_objective_code,
+        masteryScore: Number(masteryRow.mastery_score),
+        consecutiveCorrect: masteryRow.consecutive_correct,
+        lastEvaluatedAt: masteryRow.last_evaluated_at,
+      };
+    }
+
+    return { response, mastery };
+  } catch {
+    isInMemoryFallback = true;
+    return recordStudentResponse(studentId, questionId, data);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Adaptive Engine - Recommended Question Selection
+// ---------------------------------------------------------------------------
+
+export async function getRecommendedQuestion(
+  studentId: string,
+  subjectCode: string
+): Promise<Question | null> {
+  if (isInMemoryFallback) {
+    const answeredIds = memStudentResponses
+      .filter((r) => r.studentId === studentId)
+      .map((r) => r.questionId);
+
+    const targets = memMasteryStates
+      .filter((m) => m.studentId === studentId && m.masteryScore < 80)
+      .sort((a, b) => a.masteryScore - b.masteryScore);
+
+    for (const target of targets) {
+      const candidate = memQuestions.find(
+        (q) =>
+          q.subject === subjectCode &&
+          q.learningObjectiveCode === target.learningObjectiveCode &&
+          !answeredIds.includes(q.id)
+      );
+      if (candidate) return candidate;
+    }
+    return null;
+  }
+
+  try {
+    await ensureSchema();
+    const sql = `
+      SELECT q.*
+      FROM smart_exam_engine.questions q
+      JOIN smart_exam_engine.mastery_states m
+        ON m.learning_objective_code = q.learning_objective_code
+      WHERE m.student_id = $1
+        AND q.subject = $2
+        AND m.mastery_score < 80.00
+        AND q.id NOT IN (
+          SELECT question_id FROM smart_exam_engine.student_responses WHERE student_id = $1
+        )
+      ORDER BY m.mastery_score ASC, q.estimated_difficulty ASC
+      LIMIT 1;
+    `;
+    const res = await query(sql, [studentId, subjectCode]);
+    if (res.rowCount === 0) return null;
+    return mapQuestionRowToQuestion(res.rows[0] as QuestionRow);
+  } catch {
+    isInMemoryFallback = true;
+    return getRecommendedQuestion(studentId, subjectCode);
   }
 }

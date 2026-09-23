@@ -261,7 +261,75 @@ export interface SystemStats {
 
 
 // ---------------------------------------------------------------------------
-// 7. Data Conversion Utilities (SnakeCase <-> CamelCase)
+// 7. Student Tracking Entities
+// ---------------------------------------------------------------------------
+
+// 7.1 Student Profile & Preferences
+export interface StudentProfile {
+  id: string; // UUID
+  grade: Grade;
+  section: Section | null;
+  governorate: string | null;
+  targetSubject: string | null;
+  createdAt?: string;
+}
+
+export interface StudentProfileRow {
+  id: string;
+  grade: Grade;
+  section: Section | null;
+  governorate: string | null;
+  target_subject: string | null;
+  created_at?: string;
+}
+
+// 7.2 Learning Objective Mastery State
+export interface MasteryState {
+  id: string; // UUID
+  studentId: string; // FK -> student_profiles.id
+  learningObjectiveCode: string;
+  masteryScore: number;
+  consecutiveCorrect: number;
+  lastEvaluatedAt?: string;
+}
+
+export interface MasteryStateRow {
+  id: string;
+  student_id: string;
+  learning_objective_code: string;
+  mastery_score: number;
+  consecutive_correct: number;
+  last_evaluated_at?: string;
+}
+
+// 7.3 Student Response Log
+export interface StudentResponse {
+  id: string; // UUID
+  studentId: string; // FK -> student_profiles.id
+  questionId: string; // FK -> questions.id
+  learningObjectiveCode: string | null;
+  selectedOption: CorrectOption | null;
+  isCorrect: boolean;
+  timeTakenSeconds: number | null;
+  hintUsed: boolean;
+  createdAt?: string;
+}
+
+export interface StudentResponseRow {
+  id: string;
+  student_id: string;
+  question_id: string;
+  learning_objective_code: string | null;
+  selected_option: CorrectOption | null;
+  is_correct: boolean;
+  time_taken_seconds: number | null;
+  hint_used: boolean;
+  created_at?: string;
+}
+
+
+// ---------------------------------------------------------------------------
+// 8. Data Conversion Utilities (SnakeCase <-> CamelCase)
 // ---------------------------------------------------------------------------
 
 export function mapQuestionRowToQuestion(row: QuestionRow): Question {
@@ -398,4 +466,45 @@ export function mapUserSettingsRowToSettings(row: UserSettingsRow): UserSettings
     autoSync: row.auto_sync,
     updatedAt: row.updated_at
   };
+}
+
+
+// ---------------------------------------------------------------------------
+// 9. Adaptive Session Entities (Client-Side / Offline-First)
+// ---------------------------------------------------------------------------
+
+export interface StudentProfileInput {
+  grade: Grade;
+  section?: Section | null;
+  governorate?: string | null;
+  targetSubject?: string | null;
+}
+
+export interface AdaptiveObjectiveMastery {
+  masteryScore: number;
+  consecutiveCorrect: number;
+}
+
+export type AdaptiveMasteryMap = Record<string, AdaptiveObjectiveMastery>;
+
+export interface AdaptiveSessionState {
+  studentId: string;
+  subjectCode: string;
+  answeredCount: number;
+  sessionTarget: number;
+  masteryByObjective: AdaptiveMasteryMap;
+  answeredQuestionIds: string[];
+  currentQuestion: Question | null;
+  lastUpdatedAt: string;
+}
+
+export interface PendingResponse {
+  id: string;
+  studentId: string;
+  questionId: string;
+  selectedOption: CorrectOption | null;
+  isCorrect: boolean;
+  timeTakenSeconds: number | null;
+  hintUsed: boolean;
+  syncAttemptedAt?: string;
 }
