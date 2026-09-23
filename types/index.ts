@@ -21,7 +21,7 @@ export type ReviewStatus = 'draft' | 'pending_review' | 'approved' | 'rejected';
 
 export type FileStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
-export type FileType = 'pdf' | 'jpg' | 'png' | 'other';
+export type FileType = 'pdf' | 'jpg' | 'png' | 'other' | 'json';
 
 export type ThemeColor = 'blue' | 'emerald' | 'violet' | 'amber';
 
