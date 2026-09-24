@@ -7,6 +7,7 @@ import { QuestionsPage } from '@/components/QuestionsPage';
 import { SettingsPage } from '@/components/SettingsPage';
 import { AdaptivePracticePage } from '@/components/AdaptivePracticePage';
 import { SupportToast, triggerSupportToast } from '@/components/SupportToast';
+import { ParentDashboard } from '@/components/ParentDashboard';
 import {
   PSYCHOLOGICAL_MESSAGES,
   getRandomSupportMessage,
@@ -53,7 +54,8 @@ export default function HomePage() {
   }, [databaseStatus]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans transition-colors duration-200 relative pb-24 md:pb-12">
+    <>
+      <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans transition-colors duration-200 relative pb-24 md:pb-12">
       {/* Toast Notification Container */}
       <SupportToast />
 
@@ -261,6 +263,10 @@ export default function HomePage() {
           </div>
         </div>
       </footer>
-    </div>
+      </div>
+
+      {/* Parent Dashboard: floating report overlay (outside main layout structure) */}
+      <ParentDashboard />
+    </>
   );
 }

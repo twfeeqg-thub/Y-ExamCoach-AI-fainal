@@ -7,10 +7,12 @@ import {
   StudentProfileInput,
   AdaptiveMasteryMap,
   AdaptiveObjectiveMastery,
+  AdaptiveSessionState,
   PendingResponse,
   CorrectOption,
 } from '@/types/index';
 import { useApp } from '@/context/AppContext';
+import { trackStudyResponse, trackSessionStart } from '@/lib/studyTracker';
 
 // ---------------------------------------------------------------------------
 // LocalStorage Keys (Offline-First Persistent Store)
@@ -57,6 +59,55 @@ function generateClientId(): string {
     // fall through to manual generation
   }
   return 'sid-' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
+}
+
+// ---------------------------------------------------------------------------
+// Read-Only Session Accessors + Live Metrics Subscription (Parent Dashboard)
+// Purely additive: lets external readers observe the active session without
+// instantiating a second useAdaptiveSession (avoids double-sync/loadNext).
+// ---------------------------------------------------------------------------
+
+export interface AdaptiveSessionMetrics {
+  studentId: string;
+  subjectCode: string;
+  answeredCount: number;
+  sessionTarget: number;
+  masteryByObjective: AdaptiveMasteryMap;
+  answeredQuestionIds: string[];
+  lastUpdatedAt: string;
+}
+
+type AdaptiveMetricsListener = (metrics: AdaptiveSessionMetrics) => void;
+
+const adaptiveMetricsListeners = new Set<AdaptiveMetricsListener>();
+
+export function subscribeAdaptiveMetrics(listener: AdaptiveMetricsListener): () => void {
+  adaptiveMetricsListeners.add(listener);
+  return () => {
+    adaptiveMetricsListeners.delete(listener);
+  };
+}
+
+function emitAdaptiveMetrics(metrics: AdaptiveSessionMetrics): void {
+  adaptiveMetricsListeners.forEach((listener) => {
+    try {
+      listener(metrics);
+    } catch {
+      // Never let a subscriber error break the study session
+    }
+  });
+}
+
+export function readAdaptiveSessionState(): AdaptiveSessionState | null {
+  return storageGet<AdaptiveSessionState>(LS_SESSION_STATE);
+}
+
+export function readStoredStudentProfile(): StudentProfile | null {
+  return storageGet<StudentProfile>(LS_STUDENT_PROFILE);
+}
+
+export function readStoredStudentId(): string | null {
+  return storageGet<string>(LS_STUDENT_ID);
 }
 
 // ---------------------------------------------------------------------------
@@ -167,6 +218,17 @@ export function useAdaptiveSession() {
       masteryByObjective,
       answeredQuestionIds: Array.from(answeredIdsRef.current),
       currentQuestion: currentQuestionRef.current,
+      lastUpdatedAt: new Date().toISOString(),
+    });
+
+    // Notify external readers (Parent Dashboard) of the fresh snapshot
+    emitAdaptiveMetrics({
+      studentId,
+      subjectCode,
+      answeredCount,
+      sessionTarget,
+      masteryByObjective,
+      answeredQuestionIds: Array.from(answeredIdsRef.current),
       lastUpdatedAt: new Date().toISOString(),
     });
   }, [studentId, subjectCode, answeredCount, sessionTarget, masteryByObjective, currentQuestion]);
@@ -315,6 +377,7 @@ export function useAdaptiveSession() {
       setIsStarting(true);
       setSubjectCode(subject);
       subjectRef.current = subject;
+      trackSessionStart(new Date().toISOString());
       await loadNext({ initial: true });
     },
     [loadNext]
@@ -343,6 +406,16 @@ export function useAdaptiveSession() {
 
       answeredIdsRef.current.add(questionId);
       setAnsweredCount((c) => c + 1);
+
+      // Offline-first: record the response into the local study ledger
+      trackStudyResponse({
+        qid: questionId,
+        objectiveCode,
+        subject: q?.subject || subjectCode,
+        isCorrect,
+        timeTakenSeconds: timeTaken,
+        at: new Date().toISOString(),
+      });
 
       const pending: PendingResponse = {
         id: 'p-' + Math.random().toString(36).substring(2, 9),
