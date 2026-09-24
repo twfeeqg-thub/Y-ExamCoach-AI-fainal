@@ -12,6 +12,10 @@ import {
   MasteryStateRow,
   StudentResponse,
   StudentResponseRow,
+  StudentProfile,
+  StudentProfileRow,
+  Grade,
+  Section,
   mapQuestionRowToQuestion,
   mapUploadedFileRowToFile,
 } from '../types/index';
@@ -60,6 +64,8 @@ const memFiles: UploadedFile[] = [
 const memMasteryStates: MasteryState[] = [];
 
 const memStudentResponses: StudentResponse[] = [];
+
+const memStudentProfiles: StudentProfile[] = [];
 
 const memQuestions: Question[] = [
   {
@@ -780,6 +786,72 @@ export async function deleteAllQuestions(): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
+// Student Profile Management (Dual-Mode: PostgreSQL + In-Memory Fallback)
+// ---------------------------------------------------------------------------
+
+export async function saveStudentProfile(input: {
+  id: string;
+  grade: number;
+  section?: string | null;
+  governorate?: string | null;
+  targetSubject?: string | null;
+}): Promise<StudentProfile> {
+  const grade = (input.grade === 9 ? 9 : 12) as Grade;
+  const section = (input.section as Section) || null;
+  const governorate = input.governorate || null;
+  const targetSubject = input.targetSubject || null;
+
+  if (isInMemoryFallback) {
+    let existing = memStudentProfiles.find((p) => p.id === input.id);
+    if (!existing) {
+      existing = {
+        id: input.id,
+        grade,
+        section,
+        governorate,
+        targetSubject,
+        createdAt: new Date().toISOString(),
+      };
+      memStudentProfiles.push(existing);
+    } else {
+      existing.grade = grade;
+      existing.section = section;
+      existing.governorate = governorate;
+      existing.targetSubject = targetSubject;
+    }
+    return existing;
+  }
+
+  try {
+    await ensureSchema();
+    const sql = `
+      INSERT INTO smart_exam_engine.student_profiles (
+        id, grade, section, governorate, target_subject
+      ) VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT (id) DO UPDATE SET
+        grade = EXCLUDED.grade,
+        section = COALESCE(EXCLUDED.section, smart_exam_engine.student_profiles.section),
+        governorate = COALESCE(EXCLUDED.governorate, smart_exam_engine.student_profiles.governorate),
+        target_subject = COALESCE(EXCLUDED.target_subject, smart_exam_engine.student_profiles.target_subject)
+      RETURNING *;
+    `;
+    const res = await query(sql, [input.id, grade, section, governorate, targetSubject]);
+    const row = res.rows[0] as StudentProfileRow;
+    return {
+      id: row.id,
+      grade: row.grade,
+      section: row.section,
+      governorate: row.governorate,
+      targetSubject: row.target_subject,
+      createdAt: row.created_at,
+    };
+  } catch {
+    isInMemoryFallback = true;
+    return saveStudentProfile(input);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Adaptive Engine - Student Response Recording & Mastery Update
 // ---------------------------------------------------------------------------
 
@@ -843,6 +915,12 @@ export async function recordStudentResponse(
 
   try {
     await ensureSchema();
+    // Ensure student record exists to prevent FK violation
+    await query(
+      `INSERT INTO smart_exam_engine.student_profiles (id, grade) VALUES ($1, 12) ON CONFLICT (id) DO NOTHING;`,
+      [studentId]
+    );
+
     const insertSql = `
       WITH question_obj AS (
         SELECT learning_objective_code FROM smart_exam_engine.questions WHERE id = $1
@@ -937,6 +1015,13 @@ export async function getRecommendedQuestion(
       );
       if (candidate) return candidate;
     }
+
+    // Cold-start fallback: return first un-answered question for this subject
+    const unAnswered = memQuestions.find(
+      (q) => q.subject === subjectCode && !answeredIds.includes(q.id)
+    );
+    if (unAnswered) return unAnswered;
+
     return null;
   }
 
@@ -957,8 +1042,27 @@ export async function getRecommendedQuestion(
       LIMIT 1;
     `;
     const res = await query(sql, [studentId, subjectCode]);
-    if (res.rowCount === 0) return null;
-    return mapQuestionRowToQuestion(res.rows[0] as QuestionRow);
+    if (res.rowCount && res.rowCount > 0) {
+      return mapQuestionRowToQuestion(res.rows[0] as QuestionRow);
+    }
+
+    // Cold start fallback in PostgreSQL mode:
+    const fallbackSql = `
+      SELECT q.*
+      FROM smart_exam_engine.questions q
+      WHERE q.subject = $2
+        AND q.id NOT IN (
+          SELECT question_id FROM smart_exam_engine.student_responses WHERE student_id = $1
+        )
+      ORDER BY q.estimated_difficulty ASC, q.created_at ASC
+      LIMIT 1;
+    `;
+    const fallbackRes = await query(fallbackSql, [studentId, subjectCode]);
+    if (fallbackRes.rowCount && fallbackRes.rowCount > 0) {
+      return mapQuestionRowToQuestion(fallbackRes.rows[0] as QuestionRow);
+    }
+
+    return null;
   } catch {
     isInMemoryFallback = true;
     return getRecommendedQuestion(studentId, subjectCode);
