@@ -7,6 +7,8 @@
  * the storage helpers and privacy-mode tolerance found in lib/adaptiveSession.ts.
  */
 
+import { triggerLessonGamification } from './gamificationEngine';
+
 const LS_ACTIVITY = 'aadir.study.activity';
 const MAX_RESPONSES = 1000;
 
@@ -93,4 +95,24 @@ export function trackSessionStart(at: string): void {
 /** Wipe the local activity ledger (only used by maintenance flows). */
 export function clearLedger(): void {
   storageSet(LS_ACTIVITY, { responses: [], activeDays: [] });
+}
+
+/**
+ * Track a completed or reviewed lesson locally.
+ * Marks the active day and silently awards +25 XP with badge evaluation.
+ */
+export function trackLessonRead(lessonId: string, subject: string): void {
+  const ledger = getLedger();
+  const day = toLocalDayKey(new Date());
+  if (!ledger.activeDays.includes(day)) {
+    ledger.activeDays.push(day);
+  }
+  ledger.lastSessionAt = new Date().toISOString();
+  storageSet(LS_ACTIVITY, ledger);
+
+  try {
+    triggerLessonGamification(lessonId, subject);
+  } catch {
+    // Offline silent fallback
+  }
 }

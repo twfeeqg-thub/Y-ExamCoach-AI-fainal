@@ -13,6 +13,7 @@ import {
 } from '@/types/index';
 import { useApp } from '@/context/AppContext';
 import { trackStudyResponse, trackSessionStart } from '@/lib/studyTracker';
+import { triggerAnswerGamification } from '@/lib/gamificationEngine';
 
 // ---------------------------------------------------------------------------
 // LocalStorage Keys (Offline-First Persistent Store)
@@ -416,6 +417,13 @@ export function useAdaptiveSession() {
         timeTakenSeconds: timeTaken,
         at: new Date().toISOString(),
       });
+
+      // Offline-first: silent gamification update (+10 XP on correct answer, streak & badges check)
+      try {
+        triggerAnswerGamification(isCorrect, q?.subject || subjectCode, nextMastery.masteryScore);
+      } catch {
+        // Safe silent gamification fallback
+      }
 
       const pending: PendingResponse = {
         id: 'p-' + Math.random().toString(36).substring(2, 9),

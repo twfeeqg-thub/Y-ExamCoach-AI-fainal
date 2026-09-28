@@ -9,6 +9,9 @@ import { AdaptivePracticePage } from '@/components/AdaptivePracticePage';
 import { LessonManagementPage } from '@/components/LessonManagementPage';
 import { SupportToast, triggerSupportToast } from '@/components/SupportToast';
 import { ParentDashboard } from '@/components/ParentDashboard';
+import { GamificationHeaderBar } from '@/components/Gamification/GamificationHeaderBar';
+import { BadgesShowcaseModal } from '@/components/Gamification/BadgesShowcaseModal';
+import { AchievementToast } from '@/components/Gamification/AchievementToast';
 import {
   PSYCHOLOGICAL_MESSAGES,
   getRandomSupportMessage,
@@ -30,6 +33,7 @@ import {
 
 export default function HomePage() {
   const [activeTab, setActiveTab] = useState<'upload' | 'questions' | 'lessons' | 'practice' | 'settings'>('upload');
+  const [isBadgesModalOpen, setIsBadgesModalOpen] = useState<boolean>(false);
   const { stats, settings, updateUserSettings, databaseStatus } = useApp();
   const [quote, setQuote] = useState<string>('');
 
@@ -60,6 +64,7 @@ export default function HomePage() {
       <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans transition-colors duration-200 relative pb-24 md:pb-12">
       {/* Toast Notification Container */}
       <SupportToast />
+      <AchievementToast />
 
       {/* Top Header Navigation Bar (Desktop & Tablet) */}
       <header className="sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 shadow-sm">
@@ -180,6 +185,11 @@ export default function HomePage() {
         </div>
       </div>
 
+      {/* Student Gamification Bar (Level, XP, Streak & Badges) */}
+      <div className="max-w-7xl mx-auto px-4 md:px-6 pt-3">
+        <GamificationHeaderBar onOpenBadges={() => setIsBadgesModalOpen(true)} />
+      </div>
+
       {/* Main View Area */}
       <main className="flex-1 py-4 md:py-6">
         {activeTab === 'upload' && <UploadPage />}
@@ -294,6 +304,12 @@ export default function HomePage() {
 
       {/* Parent Dashboard: floating report overlay (outside main layout structure) */}
       <ParentDashboard />
+
+      {/* Student Badges Showcase Modal (Offline-First Self-Motivation) */}
+      <BadgesShowcaseModal
+        isOpen={isBadgesModalOpen}
+        onClose={() => setIsBadgesModalOpen(false)}
+      />
     </>
   );
 }

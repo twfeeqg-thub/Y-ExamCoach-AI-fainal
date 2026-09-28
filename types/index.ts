@@ -657,3 +657,39 @@ export function mapLessonRowToLesson(row: LessonRow): Lesson {
   };
 }
 
+// ---------------------------------------------------------------------------
+// 9. Gamification & Self-Motivation System Types
+// ---------------------------------------------------------------------------
+
+export type BadgeCategory = 'explorer' | 'streak' | 'subject' | 'mastery' | 'milestone';
+
+export interface Badge {
+  id: string;
+  title: string;
+  description: string;
+  category: BadgeCategory;
+  icon: string;
+  condition: string;
+  unlockedAt?: string;
+}
+
+export interface StudentGamificationState {
+  xp: number;
+  level: number;
+  currentStreak: number;
+  longestStreak: number;
+  unlockedBadges: string[];
+  lastActiveDate?: string;
+  totalCorrect?: number;
+  completedLessonIds?: string[];
+  subjectCounts?: Record<string, number>;
+  maxMasteryScore?: number;
+}
+
+export interface GamificationEventResult {
+  xpGained: number;
+  newLevel?: number;
+  newBadges: Badge[];
+  streakUpdated: boolean;
+}
+

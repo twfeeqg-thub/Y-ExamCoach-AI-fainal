@@ -11,6 +11,7 @@ import {
 import { LessonUploadForm } from './LessonUploadForm';
 import { MathText } from './MathText';
 import { triggerSupportToast } from './SupportToast';
+import { trackLessonRead } from '@/lib/studyTracker';
 import {
   BookOpen,
   PlusCircle,
@@ -632,6 +633,28 @@ export const LessonManagementPage: React.FC = () => {
                         </div>
                       </div>
                     )}
+
+                    {/* Lesson Gamification Completion Action */}
+                    <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between flex-wrap gap-3">
+                      <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-amber-500" />
+                        <span>أكملت استيعاب المفاهيم؟ احصل على <strong className="text-amber-600 dark:text-amber-400 font-mono">+25 XP</strong> وتقدم في مسارك!</span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          trackLessonRead(lesson.id, lesson.subject);
+                          triggerSupportToast({
+                            title: 'إنجاز رائع! أتممت قراءة الدرس 🎉',
+                            message: `تمت إضافة +25 XP إلى رصيدك لمادة ${lesson.subject}. واصل التقدم!`,
+                            type: 'success',
+                          });
+                        }}
+                        className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-bold text-xs flex items-center gap-2 shadow-sm transition active:scale-95 cursor-pointer"
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>إتمام قراءة الدرس (+25 XP)</span>
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
