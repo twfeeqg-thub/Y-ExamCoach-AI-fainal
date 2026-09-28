@@ -16,8 +16,13 @@ import {
   StudentProfileRow,
   Grade,
   Section,
+  Lesson,
+  LessonRow,
+  LessonInput,
+  LessonMediaResources,
   mapQuestionRowToQuestion,
   mapUploadedFileRowToFile,
+  mapLessonRowToLesson,
 } from '../types/index';
 
 // ---------------------------------------------------------------------------
@@ -321,6 +326,22 @@ export async function ensureSchema(): Promise<void> {
       time_taken_seconds INT,
       hint_used BOOLEAN DEFAULT FALSE,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS smart_exam_engine.lessons (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      grade INT NOT NULL CHECK (grade IN (9, 12)),
+      section TEXT,
+      subject TEXT NOT NULL,
+      unit_title TEXT,
+      unit_order INT DEFAULT 1,
+      lesson_title TEXT NOT NULL,
+      lesson_order INT DEFAULT 1,
+      learning_objective_codes TEXT[],
+      estimated_reading_time_minutes INT DEFAULT 10,
+      content_json JSONB NOT NULL,
+      media_resources JSONB DEFAULT '{"audio":[],"video":[],"attachments":[]}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );
   `;
 
@@ -1068,3 +1089,358 @@ export async function getRecommendedQuestion(
     return getRecommendedQuestion(studentId, subjectCode);
   }
 }
+
+// ---------------------------------------------------------------------------
+// 7. Hybrid Lessons Operations (Offline-First / In-Memory + PostgreSQL)
+// ---------------------------------------------------------------------------
+
+export const memLessons: Lesson[] = [
+  {
+    id: 'les-sample-12-math',
+    grade: 12,
+    section: 'علمي',
+    subject: 'الرياضيات',
+    unitTitle: 'حساب التفاضل والتكامل',
+    unitOrder: 1,
+    lessonTitle: 'نهايات الدوال المثلثية والاتصال',
+    lessonOrder: 1,
+    learningObjectiveCodes: ['MATH-12-CALC-01', 'MATH-12-CALC-02'],
+    estimatedReadingTimeMinutes: 12,
+    content: {
+      introduction: 'تعد نهايات الدوال المثلثية من الركائز الأساسية لحساب التفاضل، حيث تمهد لاشتقاق الدوال الدائرية وفهم سلوك المنحنيات بالقرب من النقاط الحرجة.',
+      coreConcepts: [
+        {
+          conceptTitle: 'النظرية الأساسية لنهاية الجيب',
+          explanation: 'تنص النظرية على أن: $\\lim_{x \\to 0} \\frac{\\sin(ax)}{x} = a$. تعتمد هذه النتيجة على مبرهنة الحصر (الساندويتش) وتفترض قياس الزوايا بالراديان دائماً.',
+          keyTakeaway: 'يجب التأكد من تطابق وسيط دالة الجيب مع المقام قبل تطبيق النتيجة المباشرة.'
+        },
+        {
+          conceptTitle: 'نهاية دالة الظل',
+          explanation: 'بالمثل بالنسبة لدالة الظل: $\\lim_{x \\to 0} \\frac{\\tan(bx)}{x} = b$، وتستنتج مباشرة بقسمة البسط والمقام على $\\cos(x)$.',
+          keyTakeaway: 'دوال جيب التمام $\\cos(x)$ عند الصفر تساوي 1 ولا تولد صيغة غير معينة بمفردها.'
+        },
+        {
+          conceptTitle: 'المرافق المثلثي لفك عدم التعيين',
+          explanation: 'في الصيغ مثل $\\frac{1 - \\cos(x)}{x^2}$، نضرب بسطاً ومقاماً في المرافق $(1 + \\cos(x))$ لتحويل البسط إلى $\\sin^2(x)$.',
+          keyTakeaway: 'المرافق المثلثي هو الأداة الأكثر فعالية لإزالة الصفر المزدوج في المقام.'
+        }
+      ],
+      commonMistakes: [
+        'التعويض المباشر بالدرجات بدلاً من القياس الدائري (الراديان).',
+        'تطبيق نظرية $\\lim \\frac{\\sin(x)}{x} = 1$ عندما تؤول $x$ إلى $\\infty$ بدلاً من $0$.',
+        'نسيان توزيع معاملات الزاوية الداخلية مثل $\\sin(3x)$ عند القسمة على $x$.'
+      ],
+      solvedExamples: [
+        {
+          exampleText: 'احسب قيمة النهاية: $\\lim_{x \\to 0} \\frac{\\sin(5x)}{\\tan(2x)}$',
+          stepByStepSolution: '1) بقسمة كلاً من البسط والمقام على $x$:\n$$\\lim_{x \\to 0} \\frac{\\frac{\\sin(5x)}{x}}{\\frac{\\tan(2x)}{x}}$$\n2) تطبيق النظرية على البسط: $\\lim_{x \\to 0} \\frac{\\sin(5x)}{x} = 5$.\n3) تطبيق النظرية على المقام: $\\lim_{x \\to 0} \\frac{\\tan(2x)}{x} = 2$.\n4) إذن النهاية تساوي الكسر الناتج.',
+          finalAnswer: '$\\frac{5}{2}$'
+        },
+        {
+          exampleText: 'احسب النهاية: $\\lim_{x \\to 0} \\frac{1 - \\cos(x)}{x^2}$',
+          stepByStepSolution: '1) بالضرب في المرافق المثلثي $(1 + \\cos(x))$:\n$$\\lim_{x \\to 0} \\frac{(1 - \\cos(x))(1 + \\cos(x))}{x^2(1 + \\cos(x))} = \\lim_{x \\to 0} \\frac{\\sin^2(x)}{x^2 (1 + \\cos(x))}$$\n2) نفصل النهاية: $\\left(\\lim_{x \\to 0} \\frac{\\sin(x)}{x}\\right)^2 \\cdot \\lim_{x \\to 0} \\frac{1}{1 + \\cos(x)} = 1^2 \\cdot \\frac{1}{1 + 1}$.',
+          finalAnswer: '$\\frac{1}{2}$'
+        }
+      ],
+      activeRecallSummary: 'سؤال الاسترجاع السريع: ما الشرط الأساسي الذي لا غنى عنه لتطبيق نتيجة $\\lim_{x \\to 0} \\frac{\\sin(x)}{x} = 1$؟ الإجابة: أن تؤول الزاوية إلى الصفر، وأن تكون الزاوية مقاسة بالراديان حصراً.'
+    },
+    mediaResources: {
+      audio: [],
+      video: [
+        {
+          sourceType: 'youtube_url',
+          url: 'https://www.youtube.com/watch?v=sampleMathLimits',
+          title: 'شرح مرئي: نهايات الدوال المثلثية وتطبيقات مبرهنة الحصر',
+          durationSeconds: 720
+        }
+      ],
+      attachments: []
+    },
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'les-sample-12-phys',
+    grade: 12,
+    section: 'علمي',
+    subject: 'الفيزياء',
+    unitTitle: 'الكهرباء المتحركة',
+    unitOrder: 1,
+    lessonTitle: 'قانون أوم وتوصيل المقاومات',
+    lessonOrder: 2,
+    learningObjectiveCodes: ['PHYS-12-ELEC-04', 'PHYS-12-ELEC-05'],
+    estimatedReadingTimeMinutes: 10,
+    content: {
+      introduction: 'يشكل قانون أوم الأساس النظري والتطبيقي لتحليل كافة الدوائر الكهربائية البسيطة والمعقدة، ويربط بين فرق الجهد، شدة التيار، والمقاومة الأومية.',
+      coreConcepts: [
+        {
+          conceptTitle: 'نص قانون أوم الرياضي',
+          explanation: 'عند ثبوت درجة الحرارة، يتناسب فرق الجهد بين طرفي موصل طردياً مع شدة التيار المار فيه: $V = I \\cdot R$.',
+          keyTakeaway: 'المقاومة $R$ للموصل ثابتة طالما بقيت درجة الحرارة والعوامل الهندسية ثابتة.'
+        },
+        {
+          conceptTitle: 'التوصيل على التوالي',
+          explanation: 'في التوصيل على التوالي يمر نفس التيار في جميع المقاومات، ويتجزأ فرق الجهد الكلي: $R_{eq} = R_1 + R_2 + R_3$. المقاومة المكافئة أكبر من أكبر مقاومة.',
+          keyTakeaway: 'التيار ثابت والجهد يتجزأ بنسبة طردية مع قيم المقاومات.'
+        },
+        {
+          conceptTitle: 'التوصيل على التوازي',
+          explanation: 'في التوصيل على التوازي يكون فرق الجهد ثابتاً عبر كل فرع، وتتجزأ شدة التيار: $\\frac{1}{R_{eq}} = \\frac{1}{R_1} + \\frac{1}{R_2}$. المقاومة المكافئة أصغر من أصغر مقاومة.',
+          keyTakeaway: 'الجهد ثابت والتيار يتجزأ بنسبة عكسية مع قيم المقاومات.'
+        }
+      ],
+      commonMistakes: [
+        'جمع المقاومات جمعاً خطياً في دوائر التوازي.',
+        'افتراض أن قدرة المصباح تزداد دائماً بزيادة المقاومة دون مراعاة نوع التوصيل (ثبوت الجهد أم التيار).',
+        'إهمال المقاومة الداخلية للمصدر الكهربائي ($r$).'
+      ],
+      solvedExamples: [
+        {
+          exampleText: 'وصلت مقاومتان $R_1 = 6\\,\\Omega$ و $R_2 = 3\\,\\Omega$ على التوازي بمصدر جهده $12\\,\\text{V}$. احسب شدة التيار الكلي.',
+          stepByStepSolution: '1) حساب المقاومة المكافئة:\n$$R_{eq} = \\frac{R_1 \\cdot R_2}{R_1 + R_2} = \\frac{6 \\times 3}{6 + 3} = \\frac{18}{9} = 2\\,\\Omega$$\n2) حساب التيار الكلي من قانون أوم:\n$$I_{total} = \\frac{V}{R_{eq}} = \\frac{12}{2} = 6\\,\\text{A}$$',
+          finalAnswer: '$6\\,\\text{A}$'
+        }
+      ],
+      activeRecallSummary: 'سؤال التثبيت: لماذا توصل الأجهزة المنزلية على التوازي وليس على التوالي؟ الإجابة: لضمان ثبوت الجهد التشغيلي القياسي (220V) لكل جهاز، ولكي يعمل كل جهاز باستقلالية دون انقطاع الدائرة عند إيقاف جهاز آخر.'
+    },
+    mediaResources: {
+      audio: [],
+      video: [],
+      attachments: [
+        {
+          sourceType: 'url',
+          url: 'https://example.com/physics-circuits-summary.pdf',
+          title: 'ملخص مخططات الدوائر الكهربائية وقوانين كيرشوف',
+        }
+      ]
+    },
+    createdAt: new Date().toISOString()
+  }
+];
+
+export async function insertLessons(
+  lessonsInput: LessonInput[]
+): Promise<{ inserted: number; lessons: Lesson[] }> {
+  if (!Array.isArray(lessonsInput) || lessonsInput.length === 0) {
+    return { inserted: 0, lessons: [] };
+  }
+
+  const newLessons: Lesson[] = [];
+
+  for (const item of lessonsInput) {
+    const id = item.id || `les-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const grade = (item.grade === 9 ? 9 : 12) as Grade;
+    const section = item.section || null;
+    const subject = item.subject || 'عام';
+    const unitTitle = item.unitTitle || null;
+    const unitOrder = Number(item.unitOrder) || 1;
+    const lessonTitle = item.lessonTitle || 'درس بدون عنوان';
+    const lessonOrder = Number(item.lessonOrder) || 1;
+    const learningObjectiveCodes = Array.isArray(item.learningObjectiveCodes)
+      ? item.learningObjectiveCodes
+      : [];
+    const estimatedReadingTimeMinutes = Number(item.estimatedReadingTimeMinutes) || 10;
+    const content = item.content || {
+      introduction: '',
+      coreConcepts: [],
+      commonMistakes: [],
+      solvedExamples: [],
+      activeRecallSummary: '',
+    };
+    const mediaResources: LessonMediaResources = {
+      audio: Array.isArray(item.mediaResources?.audio) ? item.mediaResources.audio : [],
+      video: Array.isArray(item.mediaResources?.video) ? item.mediaResources.video : [],
+      attachments: Array.isArray(item.mediaResources?.attachments)
+        ? item.mediaResources.attachments
+        : [],
+    };
+    const createdAt = new Date().toISOString();
+
+    const lesson: Lesson = {
+      id,
+      grade,
+      section,
+      subject,
+      unitTitle,
+      unitOrder,
+      lessonTitle,
+      lessonOrder,
+      learningObjectiveCodes,
+      estimatedReadingTimeMinutes,
+      content,
+      mediaResources,
+      createdAt,
+    };
+
+    if (isInMemoryFallback) {
+      // In-memory mode: update existing if id matches or prepend
+      const existingIdx = memLessons.findIndex((l) => l.id === lesson.id);
+      if (existingIdx >= 0) {
+        memLessons[existingIdx] = lesson;
+      } else {
+        memLessons.unshift(lesson);
+      }
+      newLessons.push(lesson);
+      continue;
+    }
+
+    try {
+      await ensureSchema();
+      const sql = `
+        INSERT INTO smart_exam_engine.lessons (
+          id, grade, section, subject, unit_title, unit_order, lesson_title, lesson_order,
+          learning_objective_codes, estimated_reading_time_minutes, content_json, media_resources, created_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        ON CONFLICT (id) DO UPDATE SET
+          grade = EXCLUDED.grade,
+          section = EXCLUDED.section,
+          subject = EXCLUDED.subject,
+          unit_title = EXCLUDED.unit_title,
+          unit_order = EXCLUDED.unit_order,
+          lesson_title = EXCLUDED.lesson_title,
+          lesson_order = EXCLUDED.lesson_order,
+          learning_objective_codes = EXCLUDED.learning_objective_codes,
+          estimated_reading_time_minutes = EXCLUDED.estimated_reading_time_minutes,
+          content_json = EXCLUDED.content_json,
+          media_resources = EXCLUDED.media_resources
+        RETURNING *;
+      `;
+      const res = await query(sql, [
+        lesson.id,
+        lesson.grade,
+        lesson.section,
+        lesson.subject,
+        lesson.unitTitle,
+        lesson.unitOrder,
+        lesson.lessonTitle,
+        lesson.lessonOrder,
+        lesson.learningObjectiveCodes,
+        lesson.estimatedReadingTimeMinutes,
+        JSON.stringify(lesson.content),
+        JSON.stringify(lesson.mediaResources),
+        lesson.createdAt,
+      ]);
+
+      if (res.rows && res.rows.length > 0) {
+        newLessons.push(mapLessonRowToLesson(res.rows[0] as LessonRow));
+      } else {
+        newLessons.push(lesson);
+      }
+    } catch {
+      isInMemoryFallback = true;
+      const existingIdx = memLessons.findIndex((l) => l.id === lesson.id);
+      if (existingIdx >= 0) {
+        memLessons[existingIdx] = lesson;
+      } else {
+        memLessons.unshift(lesson);
+      }
+      newLessons.push(lesson);
+    }
+  }
+
+  return { inserted: newLessons.length, lessons: newLessons };
+}
+
+export async function getLessons(filters?: {
+  subject?: string;
+  grade?: number;
+  section?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<Lesson[]> {
+  const limit = Math.max(1, Math.min(filters?.limit || 100, 200));
+  const offset = Math.max(0, filters?.offset || 0);
+
+  if (isInMemoryFallback) {
+    let result = [...memLessons];
+    if (filters?.subject && filters.subject !== 'all') {
+      result = result.filter((l) => l.subject === filters.subject);
+    }
+    if (filters?.grade) {
+      result = result.filter((l) => l.grade === filters.grade);
+    }
+    if (filters?.section && filters.section !== 'all') {
+      result = result.filter((l) => !l.section || l.section === filters.section);
+    }
+    return result.slice(offset, offset + limit);
+  }
+
+  try {
+    await ensureSchema();
+    const conditions: string[] = [];
+    const params: any[] = [];
+    let idx = 1;
+
+    if (filters?.subject && filters.subject !== 'all') {
+      conditions.push(`subject = $${idx++}`);
+      params.push(filters.subject);
+    }
+    if (filters?.grade) {
+      conditions.push(`grade = $${idx++}`);
+      params.push(filters.grade);
+    }
+    if (filters?.section && filters.section !== 'all') {
+      conditions.push(`(section IS NULL OR section = $${idx++})`);
+      params.push(filters.section);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const sql = `
+      SELECT * FROM smart_exam_engine.lessons
+      ${whereClause}
+      ORDER BY unit_order ASC, lesson_order ASC, created_at DESC
+      LIMIT $${idx++} OFFSET $${idx++};
+    `;
+    params.push(limit, offset);
+
+    const res = await query(sql, params);
+    return res.rows.map((row) => mapLessonRowToLesson(row as LessonRow));
+  } catch {
+    isInMemoryFallback = true;
+    return getLessons(filters);
+  }
+}
+
+export async function getLessonById(id: string): Promise<Lesson | null> {
+  if (isInMemoryFallback) {
+    return memLessons.find((l) => l.id === id) || null;
+  }
+
+  try {
+    await ensureSchema();
+    const res = await query(`SELECT * FROM smart_exam_engine.lessons WHERE id = $1 LIMIT 1;`, [id]);
+    if (res.rows && res.rows.length > 0) {
+      return mapLessonRowToLesson(res.rows[0] as LessonRow);
+    }
+    return null;
+  } catch {
+    isInMemoryFallback = true;
+    return memLessons.find((l) => l.id === id) || null;
+  }
+}
+
+export async function deleteLesson(id: string): Promise<boolean> {
+  if (isInMemoryFallback) {
+    const idx = memLessons.findIndex((l) => l.id === id);
+    if (idx >= 0) {
+      memLessons.splice(idx, 1);
+      return true;
+    }
+    return false;
+  }
+
+  try {
+    await ensureSchema();
+    const res = await query(`DELETE FROM smart_exam_engine.lessons WHERE id = $1;`, [id]);
+    return (res.rowCount ?? 0) > 0;
+  } catch {
+    isInMemoryFallback = true;
+    const idx = memLessons.findIndex((l) => l.id === id);
+    if (idx >= 0) {
+      memLessons.splice(idx, 1);
+      return true;
+    }
+    return false;
+  }
+}
+

@@ -508,3 +508,152 @@ export interface PendingResponse {
   hintUsed: boolean;
   syncAttemptedAt?: string;
 }
+
+// ---------------------------------------------------------------------------
+// 10. Hybrid Lesson Entities (Stage C2)
+// ---------------------------------------------------------------------------
+
+export type MediaSourceType = 'url' | 'file_path' | 'youtube_url';
+
+export interface MediaResource {
+  sourceType: MediaSourceType;
+  url: string;
+  title: string;
+  durationSeconds?: number;
+}
+
+export interface LessonMediaResources {
+  audio: MediaResource[];
+  video: MediaResource[];
+  attachments: MediaResource[];
+}
+
+export interface CoreConcept {
+  conceptTitle: string;
+  explanation: string;
+  keyTakeaway?: string;
+}
+
+export interface SolvedExample {
+  exampleText: string;
+  stepByStepSolution: string;
+  finalAnswer: string;
+}
+
+export interface LessonContent {
+  introduction: string;
+  coreConcepts: CoreConcept[];
+  commonMistakes: string[];
+  solvedExamples: SolvedExample[];
+  activeRecallSummary: string;
+}
+
+export interface LessonInput {
+  id?: string;
+  grade: Grade;
+  section?: Section | string | null;
+  subject: string;
+  unitTitle?: string | null;
+  unitOrder?: number;
+  lessonTitle: string;
+  lessonOrder?: number;
+  learningObjectiveCodes?: string[];
+  estimatedReadingTimeMinutes?: number;
+  content: LessonContent;
+  mediaResources?: {
+    audio?: MediaResource[];
+    video?: MediaResource[];
+    attachments?: MediaResource[];
+  };
+}
+
+export interface Lesson {
+  id: string;
+  grade: Grade;
+  section: string | null;
+  subject: string;
+  unitTitle: string | null;
+  unitOrder: number;
+  lessonTitle: string;
+  lessonOrder: number;
+  learningObjectiveCodes: string[];
+  estimatedReadingTimeMinutes: number;
+  content: LessonContent;
+  mediaResources: LessonMediaResources;
+  createdAt: string;
+}
+
+export interface LessonRow {
+  id: string;
+  grade: number;
+  section: string | null;
+  subject: string;
+  unit_title: string | null;
+  unit_order: number;
+  lesson_title: string;
+  lesson_order: number;
+  learning_objective_codes: string[] | null;
+  estimated_reading_time_minutes: number;
+  content_json: LessonContent | any;
+  media_resources: LessonMediaResources | any;
+  created_at: string;
+}
+
+export function mapLessonRowToLesson(row: LessonRow): Lesson {
+  let content: LessonContent;
+  if (typeof row.content_json === 'string') {
+    try {
+      content = JSON.parse(row.content_json);
+    } catch {
+      content = {
+        introduction: row.content_json,
+        coreConcepts: [],
+        commonMistakes: [],
+        solvedExamples: [],
+        activeRecallSummary: '',
+      };
+    }
+  } else {
+    content = row.content_json || {
+      introduction: '',
+      coreConcepts: [],
+      commonMistakes: [],
+      solvedExamples: [],
+      activeRecallSummary: '',
+    };
+  }
+
+  let media: LessonMediaResources = { audio: [], video: [], attachments: [] };
+  if (typeof row.media_resources === 'string') {
+    try {
+      media = JSON.parse(row.media_resources);
+    } catch {
+      media = { audio: [], video: [], attachments: [] };
+    }
+  } else if (row.media_resources) {
+    media = {
+      audio: Array.isArray(row.media_resources.audio) ? row.media_resources.audio : [],
+      video: Array.isArray(row.media_resources.video) ? row.media_resources.video : [],
+      attachments: Array.isArray(row.media_resources.attachments) ? row.media_resources.attachments : [],
+    };
+  }
+
+  return {
+    id: String(row.id),
+    grade: (row.grade === 9 ? 9 : 12) as Grade,
+    section: row.section || null,
+    subject: row.subject || 'عام',
+    unitTitle: row.unit_title || null,
+    unitOrder: Number(row.unit_order) || 1,
+    lessonTitle: row.lesson_title || 'درس بدون عنوان',
+    lessonOrder: Number(row.lesson_order) || 1,
+    learningObjectiveCodes: Array.isArray(row.learning_objective_codes)
+      ? row.learning_objective_codes
+      : [],
+    estimatedReadingTimeMinutes: Number(row.estimated_reading_time_minutes) || 10,
+    content,
+    mediaResources: media,
+    createdAt: row.created_at || new Date().toISOString(),
+  };
+}
+
