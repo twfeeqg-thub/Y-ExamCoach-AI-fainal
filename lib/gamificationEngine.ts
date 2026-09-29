@@ -190,6 +190,16 @@ export function saveGamificationState(state: StudentGamificationState): void {
       window.dispatchEvent(
         new CustomEvent('aadir:gamification:updated', { detail: state })
       );
+      // Quiet background cloud synchronization if studentId exists
+      const rawId = window.localStorage.getItem('aadir.student.id');
+      if (rawId) {
+        const studentId = rawId.replace(/^"|"$/g, '');
+        fetch('/api/student/gamification', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ studentId, state }),
+        }).catch(() => {});
+      }
     } catch {
       // Ignore dispatch failures
     }

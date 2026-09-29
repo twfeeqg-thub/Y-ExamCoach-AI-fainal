@@ -201,6 +201,30 @@ export const AdaptiveQuestionCard: React.FC<AdaptiveQuestionCardProps> = ({
           </span>
 
           {getDifficultyBadge(question.estimatedDifficulty)}
+
+          {/* Repeated Ministerial Badge */}
+          {(() => {
+            const src = (question.source || '').toLowerCase();
+            const isMinisterial = src.includes('وزار') || src.includes('وزارة') || src.includes('امتحان') || src.includes('ثانوية') || Boolean(question.examYear);
+            const repCount = question.repetitionCount && question.repetitionCount > 0
+              ? question.repetitionCount
+              : (question.examYears && question.examYears.length > 0 ? question.examYears.length : 1);
+            const years = Array.isArray(question.examYears) && question.examYears.length > 0
+              ? question.examYears
+              : (question.examYear ? [question.examYear] : []);
+            if (isMinisterial && (repCount > 1 || years.length > 1)) {
+              return (
+                <span className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-gradient-to-r from-amber-400/20 via-yellow-400/25 to-amber-500/20 text-amber-950 dark:text-amber-200 border border-amber-400/70 dark:border-amber-500 font-black shadow-sm shadow-amber-500/10">
+                  <span className="text-sm">🏛️</span>
+                  <span>وزاري مكرر ({Math.max(repCount, years.length)} مرات)</span>
+                  <span className="text-amber-800 dark:text-amber-300 font-mono text-[11px]">
+                    | الأعوام: [{years.join('، ')}]
+                  </span>
+                </span>
+              );
+            }
+            return null;
+          })()}
         </div>
 
         {/* Timer */}

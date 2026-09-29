@@ -71,6 +71,8 @@ export interface Question {
   reviewStatus: ReviewStatus;
   contentVersion: number;
   normalizedTextHash: string | null; // البصمة النصية لمنع التكرار دلالياً
+  repetitionCount?: number; // عدد مرات تكرار السؤال الوزاري
+  examYears?: number[]; // قائمة الأعوام الامتحانية التي ورد فيها السؤال
   createdAt?: string;
   updatedAt?: string;
 
@@ -119,6 +121,8 @@ export interface QuestionRow {
   review_status: ReviewStatus;
   content_version: number;
   normalized_text_hash: string | null;
+  repetition_count?: number | null;
+  exam_years?: number[] | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -249,6 +253,8 @@ export interface QuestionInput {
   reviewStatus?: ReviewStatus;
   contentVersion?: number;
   fileName?: string | null;
+  repetitionCount?: number;
+  examYears?: number[];
 }
 
 export interface SystemStats {
@@ -368,6 +374,12 @@ export function mapQuestionRowToQuestion(row: QuestionRow): Question {
     reviewStatus: row.review_status,
     contentVersion: row.content_version,
     normalizedTextHash: row.normalized_text_hash,
+    repetitionCount: typeof row.repetition_count === 'number'
+      ? row.repetition_count
+      : (row.repetition_count ? Number(row.repetition_count) : 1),
+    examYears: Array.isArray(row.exam_years) && row.exam_years.length > 0
+      ? row.exam_years
+      : (row.exam_year ? [row.exam_year] : []),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     isDuplicate: false,
@@ -411,6 +423,10 @@ export function mapQuestionToQuestionRow(q: Question): QuestionRow {
     review_status: q.reviewStatus,
     content_version: q.contentVersion,
     normalized_text_hash: q.normalizedTextHash,
+    repetition_count: q.repetitionCount ?? 1,
+    exam_years: Array.isArray(q.examYears) && q.examYears.length > 0
+      ? q.examYears
+      : (q.examYear ? [q.examYear] : []),
     created_at: q.createdAt,
     updated_at: q.updatedAt
   };

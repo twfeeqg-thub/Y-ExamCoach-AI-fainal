@@ -100,6 +100,59 @@ export const SmartQuestionCard: React.FC<SmartQuestionCardProps> = ({ question }
     }
   };
 
+  const getSourceMeta = () => {
+    const src = (question.source || '').toLowerCase();
+    const isMinisterial =
+      src.includes('وزار') ||
+      src.includes('وزارة') ||
+      src.includes('امتحان') ||
+      src.includes('ثانوية') ||
+      Boolean(question.examYear);
+    const isTextbook = src.includes('كتاب') || src.includes('منهج') || src.includes('مدرسي');
+
+    let typeName = 'تدريب مستنبط 💡';
+    let badgeClasses =
+      'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-200 dark:border-slate-700';
+
+    if (isMinisterial) {
+      typeName = 'سؤال وزاري 🏛️';
+      badgeClasses =
+        'bg-blue-50 text-blue-800 dark:bg-blue-950/80 dark:text-blue-300 border-blue-200 dark:border-blue-900';
+    } else if (isTextbook) {
+      typeName = 'من كتاب المنهج 📘';
+      badgeClasses =
+        'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300 border-emerald-200 dark:border-emerald-900';
+    }
+
+    const repCount =
+      question.repetitionCount && question.repetitionCount > 0
+        ? question.repetitionCount
+        : question.examYears && question.examYears.length > 0
+        ? question.examYears.length
+        : 1;
+
+    const years: number[] =
+      Array.isArray(question.examYears) && question.examYears.length > 0
+        ? question.examYears
+        : question.examYear
+        ? [question.examYear]
+        : [];
+
+    const isRepeatedMinisterial = isMinisterial && (repCount > 1 || years.length > 1);
+
+    return {
+      isMinisterial,
+      isTextbook,
+      typeName,
+      badgeClasses,
+      repCount: Math.max(repCount, years.length),
+      years,
+      isRepeatedMinisterial,
+    };
+  };
+
+  const sourceMeta = getSourceMeta();
+
   return (
     <div
       className={`bg-white dark:bg-slate-900 border rounded-3xl p-4 md:p-6 transition-all duration-200 shadow-sm hover:shadow-md relative space-y-4 ${
@@ -111,8 +164,32 @@ export const SmartQuestionCard: React.FC<SmartQuestionCardProps> = ({ question }
       {/* 1. Header Badges & Meta */}
       <div className="flex items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3 flex-wrap">
         <div className="flex items-center gap-1.5 md:gap-2 flex-wrap text-xs">
+          {/* Source and Repeated Ministerial Badge */}
+          {sourceMeta.isRepeatedMinisterial ? (
+            <span className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-gradient-to-r from-amber-400/20 via-yellow-400/25 to-amber-500/20 text-amber-950 dark:text-amber-200 border border-amber-400/70 dark:border-amber-500 font-black shadow-sm shadow-amber-500/10">
+              <span className="text-sm">🏛️</span>
+              <span>سؤال وزاري مكرر ({sourceMeta.repCount} مرات)</span>
+              <span className="text-amber-800 dark:text-amber-300 font-mono text-[11px]">
+                | الأعوام: [{sourceMeta.years.join('، ')}]
+              </span>
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+              </span>
+            </span>
+          ) : (
+            <span
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-xl border text-xs font-bold ${sourceMeta.badgeClasses}`}
+            >
+              <span>{sourceMeta.typeName}</span>
+              {question.examYear && (
+                <span className="font-mono text-[11px] opacity-75">({question.examYear})</span>
+              )}
+            </span>
+          )}
+
           {/* Duplicate Detection Badge */}
-          {question.isDuplicate && (
+          {question.isDuplicate && !sourceMeta.isRepeatedMinisterial && (
             <span className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200 font-extrabold animate-pulse">
               <AlertTriangle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
               <span>سؤال مكرر (تطابق الهاش)</span>

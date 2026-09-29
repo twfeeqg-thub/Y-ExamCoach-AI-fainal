@@ -23,6 +23,7 @@ import {
   mapQuestionRowToQuestion,
   mapUploadedFileRowToFile,
   mapLessonRowToLesson,
+  StudentGamificationState,
 } from '../types/index';
 
 // ---------------------------------------------------------------------------
@@ -116,6 +117,8 @@ const memQuestions: Question[] = [
     reviewStatus: 'approved',
     contentVersion: 1,
     normalizedTextHash: 'hash-sample-101',
+    repetitionCount: 3,
+    examYears: [2018, 2021, 2024],
     isDuplicate: false,
     status: 'inserted',
   },
@@ -162,6 +165,8 @@ const memQuestions: Question[] = [
     reviewStatus: 'approved',
     contentVersion: 1,
     normalizedTextHash: 'hash-sample-102',
+    repetitionCount: 1,
+    examYears: [2024],
     isDuplicate: false,
     status: 'inserted',
   },
@@ -206,6 +211,8 @@ const memQuestions: Question[] = [
     reviewStatus: 'approved',
     contentVersion: 1,
     normalizedTextHash: 'hash-sample-103',
+    repetitionCount: 2,
+    examYears: [2022, 2024],
     isDuplicate: false,
     status: 'inserted',
   },
@@ -293,9 +300,14 @@ export async function ensureSchema(): Promise<void> {
       review_status VARCHAR(50) NOT NULL DEFAULT 'pending_review',
       content_version INT NOT NULL DEFAULT 1,
       normalized_text_hash VARCHAR(64) UNIQUE,
+      repetition_count INT NOT NULL DEFAULT 1,
+      exam_years INT[] DEFAULT '{}',
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     );
+
+    ALTER TABLE smart_exam_engine.questions ADD COLUMN IF NOT EXISTS repetition_count INT NOT NULL DEFAULT 1;
+    ALTER TABLE smart_exam_engine.questions ADD COLUMN IF NOT EXISTS exam_years INT[] DEFAULT '{}';
 
     CREATE TABLE IF NOT EXISTS smart_exam_engine.student_profiles (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -304,6 +316,21 @@ export async function ensureSchema(): Promise<void> {
       governorate TEXT,
       target_subject TEXT,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS smart_exam_engine.student_gamification (
+      student_id UUID PRIMARY KEY,
+      xp INT NOT NULL DEFAULT 0,
+      level INT NOT NULL DEFAULT 1,
+      current_streak INT NOT NULL DEFAULT 0,
+      longest_streak INT NOT NULL DEFAULT 0,
+      unlocked_badges TEXT[] DEFAULT '{}',
+      last_active_date DATE,
+      total_correct INT DEFAULT 0,
+      completed_lesson_ids TEXT[] DEFAULT '{}',
+      subject_counts JSONB DEFAULT '{}'::jsonb,
+      max_mastery_score NUMERIC(5, 2) DEFAULT 0.00,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS smart_exam_engine.mastery_states (
@@ -568,8 +595,27 @@ export async function insertQuestion(
   const cleanedText = sanitizeArabicText(questionData.questionText);
   const textHash = computeSHA256(cleanedText);
 
+  const incomingYear = questionData.examYear || (Array.isArray(questionData.examYears) && questionData.examYears[0]) || 2026;
+  const incomingYears: number[] = Array.isArray(questionData.examYears) && questionData.examYears.length > 0
+    ? Array.from(new Set(questionData.examYears)).sort((a, b) => a - b)
+    : [incomingYear];
+  const incomingRepCount = questionData.repetitionCount && questionData.repetitionCount > 0 ? questionData.repetitionCount : 1;
+
   if (isInMemoryFallback) {
-    const isDup = memQuestions.some((q) => q.normalizedTextHash === textHash);
+    const existingIndex = memQuestions.findIndex((q) => q.normalizedTextHash === textHash);
+    if (existingIndex !== -1) {
+      const existing = memQuestions[existingIndex];
+      const prevYears = Array.isArray(existing.examYears) && existing.examYears.length > 0
+        ? existing.examYears
+        : (existing.examYear ? [existing.examYear] : []);
+      const mergedYears = Array.from(new Set([...prevYears, ...incomingYears])).sort((a, b) => a - b);
+      existing.repetitionCount = (existing.repetitionCount || 1) + 1;
+      existing.examYears = mergedYears;
+      existing.isDuplicate = true;
+      existing.status = 'ignored';
+      return { ...existing };
+    }
+
     const targetFile = fileId ? memFiles.find((f) => f.id === fileId) : null;
 
     const newQ: Question = {
@@ -602,13 +648,15 @@ export async function insertQuestion(
       correctExplanation: questionData.correctExplanation || 'إجابة نموذجية',
       wrongExplanations: questionData.wrongExplanations || null,
       source: questionData.source || 'المدرب الذكي',
-      examYear: questionData.examYear || 2026,
+      examYear: incomingYear,
       governorate: questionData.governorate || 'المركزية',
       reviewStatus: questionData.reviewStatus || 'pending_review',
       contentVersion: questionData.contentVersion || 1,
       normalizedTextHash: textHash,
-      isDuplicate: isDup,
-      status: isDup ? 'ignored' : 'inserted',
+      repetitionCount: incomingRepCount,
+      examYears: incomingYears,
+      isDuplicate: false,
+      status: 'inserted',
     };
 
     memQuestions.unshift(newQ);
@@ -629,14 +677,21 @@ export async function insertQuestion(
         average_solve_time, enemy_questions, relative_questions,
         assessment_context, hint, correct_explanation, wrong_explanations,
         source, exam_year, governorate, review_status, content_version,
-        normalized_text_hash
+        normalized_text_hash, repetition_count, exam_years
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
         $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
-        $24, $25, $26, $27, $28, $29, $30, $31, $32, $33
+        $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35
       )
-      ON CONFLICT (normalized_text_hash) DO NOTHING
-      RETURNING *;
+      ON CONFLICT (normalized_text_hash) DO UPDATE SET
+        repetition_count = smart_exam_engine.questions.repetition_count + 1,
+        exam_years = ARRAY(
+          SELECT DISTINCT val
+          FROM unnest(smart_exam_engine.questions.exam_years || EXCLUDED.exam_years) AS val
+          ORDER BY val ASC
+        ),
+        updated_at = NOW()
+      RETURNING *, (xmax != 0) AS is_existing_duplicate;
     `;
 
     const values = [
@@ -668,39 +723,41 @@ export async function insertQuestion(
       questionData.correctExplanation,
       questionData.wrongExplanations ? JSON.stringify(questionData.wrongExplanations) : null,
       questionData.source || 'تطبيق المدرب الذكي',
-      questionData.examYear || 2026,
+      incomingYear,
       questionData.governorate || 'المركزية',
       questionData.reviewStatus || 'pending_review',
       questionData.contentVersion || 1,
       textHash,
+      incomingRepCount,
+      incomingYears,
     ];
 
     const res = await query(sql, values);
+    const row = res.rows[0];
+    const newQuestion = mapQuestionRowToQuestion(row as QuestionRow);
+    const wasDuplicate = Boolean(row.is_existing_duplicate || (newQuestion.repetitionCount && newQuestion.repetitionCount > 1));
 
-    if (res.rowCount === 0) {
-      const fetchExistingSql = `SELECT * FROM smart_exam_engine.questions WHERE normalized_text_hash = $1 LIMIT 1;`;
-      const existingRes = await query(fetchExistingSql, [textHash]);
-
-      if (existingRes.rowCount && existingRes.rowCount > 0) {
-        const existingQuestion = mapQuestionRowToQuestion(existingRes.rows[0] as QuestionRow);
-        return {
-          ...existingQuestion,
-          isDuplicate: true,
-          status: 'ignored',
-        };
-      }
-    }
-
-    const newQuestion = mapQuestionRowToQuestion(res.rows[0] as QuestionRow);
     return {
       ...newQuestion,
-      isDuplicate: false,
-      status: 'inserted',
+      isDuplicate: wasDuplicate,
+      status: wasDuplicate ? 'ignored' : 'inserted',
     };
   } catch {
     isInMemoryFallback = true;
     return insertQuestion(fileId, questionData);
   }
+}
+
+export async function insertQuestions(
+  fileId: string | null,
+  questionsData: QuestionInput[]
+): Promise<Question[]> {
+  const results: Question[] = [];
+  for (const q of questionsData) {
+    const item = await insertQuestion(fileId, q);
+    results.push(item);
+  }
+  return results;
 }
 
 export async function updateQuestion(
@@ -1440,6 +1497,65 @@ export async function deleteLesson(id: string): Promise<boolean> {
       memLessons.splice(idx, 1);
       return true;
     }
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 8. Student Gamification Synchronization (Dual-Mode: Cloud DB + Offline)
+// ---------------------------------------------------------------------------
+
+export async function syncGamificationWithDB(
+  studentId: string,
+  state: StudentGamificationState
+): Promise<boolean> {
+  if (!studentId || !state) return false;
+  if (isInMemoryFallback) return true;
+
+  try {
+    await ensureSchema();
+    const sql = `
+      INSERT INTO smart_exam_engine.student_gamification (
+        student_id, xp, level, current_streak, longest_streak,
+        unlocked_badges, last_active_date, total_correct,
+        completed_lesson_ids, subject_counts, max_mastery_score, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+      ON CONFLICT (student_id) DO UPDATE SET
+        xp = EXCLUDED.xp,
+        level = EXCLUDED.level,
+        current_streak = EXCLUDED.current_streak,
+        longest_streak = EXCLUDED.longest_streak,
+        unlocked_badges = EXCLUDED.unlocked_badges,
+        last_active_date = EXCLUDED.last_active_date,
+        total_correct = EXCLUDED.total_correct,
+        completed_lesson_ids = EXCLUDED.completed_lesson_ids,
+        subject_counts = EXCLUDED.subject_counts,
+        max_mastery_score = EXCLUDED.max_mastery_score,
+        updated_at = NOW();
+    `;
+
+    const lastActive = state.lastActiveDate && state.lastActiveDate.trim().length > 0
+      ? state.lastActiveDate
+      : null;
+
+    const values = [
+      studentId,
+      state.xp || 0,
+      state.level || 1,
+      state.currentStreak || 0,
+      state.longestStreak || 0,
+      state.unlockedBadges || [],
+      lastActive,
+      state.totalCorrect || 0,
+      state.completedLessonIds || [],
+      JSON.stringify(state.subjectCounts || {}),
+      state.maxMasteryScore || 0,
+    ];
+
+    await query(sql, values);
+    return true;
+  } catch (error) {
+    console.warn('[Database] Silent syncGamificationWithDB fallback:', error);
     return false;
   }
 }

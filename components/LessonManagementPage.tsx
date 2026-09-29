@@ -12,6 +12,8 @@ import { LessonUploadForm } from './LessonUploadForm';
 import { MathText } from './MathText';
 import { triggerSupportToast } from './SupportToast';
 import { trackLessonRead } from '@/lib/studyTracker';
+import { FlashcardsModal } from './Lesson/FlashcardsModal';
+import { MindMapViewerModal } from './Lesson/MindMapViewerModal';
 import {
   BookOpen,
   PlusCircle,
@@ -53,6 +55,10 @@ export const LessonManagementPage: React.FC = () => {
 
   // Expanded card IDs for viewing details
   const [expandedLessonId, setExpandedLessonId] = useState<string | null>(null);
+
+  // Modals for Flashcards and MindMap
+  const [flashcardsLesson, setFlashcardsLesson] = useState<Lesson | null>(null);
+  const [mindMapLesson, setMindMapLesson] = useState<Lesson | null>(null);
 
   // Load lessons on mount and listen for storage updates
   useEffect(() => {
@@ -418,7 +424,27 @@ export const LessonManagementPage: React.FC = () => {
                   </div>
 
                   {/* Actions & Expand Toggle */}
-                  <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                  <div className="flex items-center gap-1.5 md:gap-2 self-end sm:self-center shrink-0 flex-wrap">
+                    {/* Flashcards Trigger */}
+                    <button
+                      onClick={() => setFlashcardsLesson(lesson)}
+                      className="px-2.5 py-2 rounded-xl bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer border border-blue-200/80 dark:border-blue-900 shadow-2xs"
+                      title="استعراض البطاقات التعليمية التفاعلية للدرس"
+                    >
+                      <span className="text-sm">🎴</span>
+                      <span className="hidden sm:inline">البطاقات</span>
+                    </button>
+
+                    {/* Mind Map Trigger */}
+                    <button
+                      onClick={() => setMindMapLesson(lesson)}
+                      className="px-2.5 py-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer border border-indigo-200/80 dark:border-indigo-900 shadow-2xs"
+                      title="استعراض الخريطة الذهنية التفاعلية للدرس"
+                    >
+                      <span className="text-sm">🗺️</span>
+                      <span className="hidden sm:inline">الخريطة الذهنية</span>
+                    </button>
+
                     <button
                       onClick={() => {
                         setEditingLesson(lesson);
@@ -457,6 +483,32 @@ export const LessonManagementPage: React.FC = () => {
                 {/* Expanded Full Lesson Content */}
                 {isExpanded && (
                   <div className="border-t border-slate-100 dark:border-slate-800/80 p-5 md:p-6 bg-slate-50/50 dark:bg-slate-950/40 space-y-6">
+                    {/* Interactive Study Tools Quick Bar */}
+                    <div className="p-3.5 bg-gradient-to-r from-blue-50 via-indigo-50 to-purple-50 dark:from-blue-950/40 dark:via-indigo-950/40 dark:to-purple-950/40 rounded-2xl border border-indigo-200/60 dark:border-indigo-900/60 flex items-center justify-between gap-3 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                        <span className="text-xs font-black text-slate-900 dark:text-slate-100">
+                          أدوات المذاكرة السريعة والاستيعاب البصري:
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          onClick={() => setFlashcardsLesson(lesson)}
+                          className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition active:scale-95 cursor-pointer"
+                        >
+                          <span>🎴</span>
+                          <span>البطاقات التعليمية (Flashcards)</span>
+                        </button>
+                        <button
+                          onClick={() => setMindMapLesson(lesson)}
+                          className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition active:scale-95 cursor-pointer"
+                        >
+                          <span>🗺️</span>
+                          <span>الخريطة الذهنية (Mind Map)</span>
+                        </button>
+                      </div>
+                    </div>
+
                     {/* Objectives Chips */}
                     {lesson.learningObjectiveCodes && lesson.learningObjectiveCodes.length > 0 && (
                       <div className="flex items-center gap-2 flex-wrap">
@@ -662,6 +714,20 @@ export const LessonManagementPage: React.FC = () => {
           })}
         </div>
       )}
+
+      {/* Interactive Flashcards Modal */}
+      <FlashcardsModal
+        lesson={flashcardsLesson}
+        isOpen={Boolean(flashcardsLesson)}
+        onClose={() => setFlashcardsLesson(null)}
+      />
+
+      {/* Interactive Mind Map Modal */}
+      <MindMapViewerModal
+        lesson={mindMapLesson}
+        isOpen={Boolean(mindMapLesson)}
+        onClose={() => setMindMapLesson(null)}
+      />
     </div>
   );
 };
