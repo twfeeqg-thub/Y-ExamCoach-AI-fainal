@@ -42,9 +42,11 @@ function renderLatex(content: string, displayMode: boolean): string {
   }
 }
 
-export const LaTeXText: React.FC<{ text: string; className?: string }> = ({ text, className }) => {
+export const LaTeXText: React.FC<{ text?: string | null; className?: string }> = ({ text, className }) => {
+  const safeText = typeof text === 'string' ? text : (text != null ? String(text) : '');
   const nodes = useMemo(() => {
-    const tokens = text.split(/(\$\$.+?\$\$|\\\(.+?\\\))/g);
+    if (!safeText || safeText.trim().length === 0) return null;
+    const tokens = safeText.split(/(\$\$.+?\$\$|\\\(.+?\\\))/g);
     return tokens.map((token, i) => {
       if (token.startsWith(DISPLAY_MATH_DELIM) && token.endsWith(DISPLAY_MATH_DELIM)) {
         const body = token.slice(2, -2);
@@ -77,10 +79,14 @@ export const LaTeXText: React.FC<{ text: string; className?: string }> = ({ text
         </React.Fragment>
       );
     });
-  }, [text]);
+  }, [safeText]);
 
   return <span className={className}>{nodes}</span>;
 };
+
+// Aliases for compatibility
+export const LatexText = LaTeXText;
+export const MathText = LaTeXText;
 
 // ---------------------------------------------------------------------------
 // Difficulty Badge
@@ -143,6 +149,55 @@ export const AdaptiveQuestionCard: React.FC<AdaptiveQuestionCardProps> = ({
   const [seconds, setSeconds] = useState<number>(0);
   const answeringRef = useRef<boolean>(false);
 
+  // Extract actual question text supporting camelCase, snake_case and generic text fields
+  const actualQuestionText =
+    question?.questionText ||
+    (question as any)?.question_text ||
+    (question as any)?.text ||
+    (question as any)?.question ||
+    '';
+
+  const actualCorrectOption = (
+    question?.correctOption ||
+    (question as any)?.correct_option ||
+    'A'
+  ) as CorrectOption;
+
+  const actualOptionA = question?.optionA || (question as any)?.option_a || '';
+  const actualOptionB = question?.optionB || (question as any)?.option_b || '';
+  const actualOptionC = question?.optionC || (question as any)?.option_c || null;
+  const actualOptionD = question?.optionD || (question as any)?.option_d || null;
+
+  const actualObjectiveCode =
+    question?.learningObjectiveCode ||
+    (question as any)?.learning_objective_code ||
+    null;
+
+  const actualSubject =
+    question?.subject ||
+    (question as any)?.subject_code ||
+    '';
+
+  const actualDifficulty =
+    question?.estimatedDifficulty ||
+    (question as any)?.estimated_difficulty ||
+    'medium';
+
+  const actualExpectedTime =
+    question?.expectedTime ||
+    (question as any)?.expected_time ||
+    60;
+
+  const actualHint =
+    question?.hint ||
+    (question as any)?.hint ||
+    null;
+
+  const actualCorrectExplanation =
+    question?.correctExplanation ||
+    (question as any)?.correct_explanation ||
+    '';
+
   // Timer: counts solve time in seconds until the answer is locked
   useEffect(() => {
     if (answered) return;
@@ -177,7 +232,7 @@ export const AdaptiveQuestionCard: React.FC<AdaptiveQuestionCardProps> = ({
     setHintUsed(true);
   };
 
-  const isCorrect = answered && selected === question.correctOption;
+  const isCorrect = answered && selected === actualCorrectOption;
 
   return (
     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-4 md:p-6 shadow-sm transition-all relative space-y-4">
@@ -188,30 +243,32 @@ export const AdaptiveQuestionCard: React.FC<AdaptiveQuestionCardProps> = ({
             سؤال {questionIndex}
           </span>
 
-          {question.learningObjectiveCode && (
+          {actualObjectiveCode && (
             <span className="px-2.5 py-1 rounded-xl bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 flex items-center gap-1.5 font-bold">
               <Target className="w-3.5 h-3.5 shrink-0" />
-              <span className="font-mono">{question.learningObjectiveCode}</span>
+              <span className="font-mono">{actualObjectiveCode}</span>
             </span>
           )}
 
-          <span className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold">
-            <BookOpen className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-            <span>{question.subject}</span>
-          </span>
+          {actualSubject && (
+            <span className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold">
+              <BookOpen className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+              <span>{actualSubject}</span>
+            </span>
+          )}
 
-          {getDifficultyBadge(question.estimatedDifficulty)}
+          {getDifficultyBadge(actualDifficulty)}
 
           {/* Repeated Ministerial Badge */}
           {(() => {
-            const src = (question.source || '').toLowerCase();
-            const isMinisterial = src.includes('وزار') || src.includes('وزارة') || src.includes('امتحان') || src.includes('ثانوية') || Boolean(question.examYear);
-            const repCount = question.repetitionCount && question.repetitionCount > 0
+            const src = (question?.source || '').toLowerCase();
+            const isMinisterial = src.includes('وزار') || src.includes('وزارة') || src.includes('امتحان') || src.includes('ثانوية') || Boolean(question?.examYear);
+            const repCount = question?.repetitionCount && question.repetitionCount > 0
               ? question.repetitionCount
-              : (question.examYears && question.examYears.length > 0 ? question.examYears.length : 1);
-            const years = Array.isArray(question.examYears) && question.examYears.length > 0
+              : (question?.examYears && question.examYears.length > 0 ? question.examYears.length : 1);
+            const years = Array.isArray(question?.examYears) && question.examYears.length > 0
               ? question.examYears
-              : (question.examYear ? [question.examYear] : []);
+              : (question?.examYear ? [question.examYear] : []);
             if (isMinisterial && (repCount > 1 || years.length > 1)) {
               return (
                 <span className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-gradient-to-r from-amber-400/20 via-yellow-400/25 to-amber-500/20 text-amber-950 dark:text-amber-200 border border-amber-400/70 dark:border-amber-500 font-black shadow-sm shadow-amber-500/10">
@@ -230,7 +287,7 @@ export const AdaptiveQuestionCard: React.FC<AdaptiveQuestionCardProps> = ({
         {/* Timer */}
         <div
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-mono font-black text-sm ${
-            seconds >= (question.expectedTime || 60)
+            seconds >= actualExpectedTime
               ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
               : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
           }`}
@@ -242,20 +299,26 @@ export const AdaptiveQuestionCard: React.FC<AdaptiveQuestionCardProps> = ({
 
       {/* Question Text + Math */}
       <div className="text-base md:text-lg font-bold text-slate-900 dark:text-slate-100 leading-relaxed pt-1">
-        <LaTeXText text={question.questionText} />
+        {actualQuestionText ? (
+          <LaTeXText text={actualQuestionText} />
+        ) : (
+          <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-sm">
+            جاري تحميل نص السؤال التكيفي...
+          </div>
+        )}
       </div>
 
       {/* Options Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1">
         {([
-          { key: 'A', text: question.optionA },
-          { key: 'B', text: question.optionB },
-          { key: 'C', text: question.optionC },
-          { key: 'D', text: question.optionD },
+          { key: 'A', text: actualOptionA },
+          { key: 'B', text: actualOptionB },
+          { key: 'C', text: actualOptionC },
+          { key: 'D', text: actualOptionD },
         ] as { key: CorrectOption; text: string | null }[])
           .filter((opt) => opt.text && opt.text.trim().length > 0)
           .map((opt) => {
-            const isCorrectOpt = question.correctOption === opt.key;
+            const isCorrectOpt = actualCorrectOption === opt.key;
             const isSelectedWrong = answered && selected === opt.key && !isCorrectOpt;
             const isSelected = answered && selected === opt.key;
 
@@ -310,7 +373,7 @@ export const AdaptiveQuestionCard: React.FC<AdaptiveQuestionCardProps> = ({
 
       {/* Hint Section */}
       <div className="flex items-center gap-2 flex-wrap pt-1">
-        {question.hint && (
+        {actualHint && (
           <>
             <button
               type="button"
@@ -332,7 +395,7 @@ export const AdaptiveQuestionCard: React.FC<AdaptiveQuestionCardProps> = ({
                 <div>
                   <span className="font-bold">تلميح تربوي: </span>
                   <span>
-                    <LaTeXText text={question.hint} />
+                    <LaTeXText text={actualHint} />
                   </span>
                 </div>
               </div>
@@ -360,11 +423,11 @@ export const AdaptiveQuestionCard: React.FC<AdaptiveQuestionCardProps> = ({
               <p className="font-bold">
                 {isCorrect
                   ? 'إجابة صحيحة! أحسنت التركيز. ✨'
-                  : `إجابة خاطئة. الإجابة الصحيحة هي الخيار ${question.correctOption}.`}
+                  : `إجابة خاطئة. الإجابة الصحيحة هي الخيار (${actualCorrectOption}).`}
               </p>
 
               {/* Diagnostic feedback for the wrong selection */}
-              {!isCorrect && selected && question.wrongExplanations?.[selected] && (
+              {!isCorrect && selected && question?.wrongExplanations?.[selected] && (
                 <p className="leading-relaxed flex items-start gap-1.5">
                   <Brain className="w-4 h-4 shrink-0 mt-0.5" />
                   <span>
@@ -374,7 +437,13 @@ export const AdaptiveQuestionCard: React.FC<AdaptiveQuestionCardProps> = ({
                 </p>
               )}
 
-              <p className="leading-relaxed">{question.correctExplanation}</p>
+              {/* Pedagogical explanation */}
+              {actualCorrectExplanation && (
+                <div className="leading-relaxed pt-1 text-slate-700 dark:text-slate-300">
+                  <span className="font-bold text-slate-900 dark:text-slate-100">الشرح والتعليل: </span>
+                  <LaTeXText text={actualCorrectExplanation} />
+                </div>
+              )}
             </div>
           </div>
         </div>

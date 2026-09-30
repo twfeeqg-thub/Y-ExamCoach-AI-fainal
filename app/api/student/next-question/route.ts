@@ -24,7 +24,15 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    return NextResponse.json({ success: true, data: question });
+    const qText = question.questionText || (question as any).question_text || '';
+    return NextResponse.json({
+      success: true,
+      data: {
+        ...question,
+        questionText: qText,
+        question_text: qText,
+      },
+    });
   } catch (error: any) {
     console.error('API /api/student/next-question GET error:', error);
     return NextResponse.json(

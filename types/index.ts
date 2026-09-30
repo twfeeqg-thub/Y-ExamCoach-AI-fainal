@@ -338,53 +338,78 @@ export interface StudentResponseRow {
 // 8. Data Conversion Utilities (SnakeCase <-> CamelCase)
 // ---------------------------------------------------------------------------
 
-export function mapQuestionRowToQuestion(row: QuestionRow): Question {
-  return {
+export function mapQuestionRowToQuestion(row: QuestionRow | any): Question {
+  const text = row.question_text ?? row.questionText ?? row.text ?? '';
+  const optA = row.option_a ?? row.optionA ?? '';
+  const optB = row.option_b ?? row.optionB ?? '';
+  const optC = row.option_c ?? row.optionC ?? null;
+  const optD = row.option_d ?? row.optionD ?? null;
+  const correctOpt = row.correct_option ?? row.correctOption ?? 'A';
+
+  const mapped: Question = {
     id: row.id,
-    fileId: row.file_id,
-    fileName: row.file_name,
-    questionText: row.question_text,
-    questionType: row.question_type,
-    optionA: row.option_a,
-    optionB: row.option_b,
-    optionC: row.option_c,
-    optionD: row.option_d,
-    correctOption: row.correct_option,
+    fileId: row.file_id ?? row.fileId,
+    fileName: row.file_name ?? row.fileName,
+    questionText: text,
+    questionType: row.question_type ?? row.questionType ?? 'multiple_choice',
+    optionA: optA,
+    optionB: optB,
+    optionC: optC,
+    optionD: optD,
+    correctOption: correctOpt,
     grade: row.grade,
     section: row.section,
     subject: row.subject,
     unit: row.unit,
     lesson: row.lesson,
-    learningObjectiveCode: row.learning_objective_code,
-    estimatedDifficulty: row.estimated_difficulty,
-    pValue: row.p_value,
-    discriminationIndex: row.discrimination_index,
-    distractorEfficiency: row.distractor_efficiency,
-    expectedTime: row.expected_time,
-    averageSolveTime: row.average_solve_time,
-    enemyQuestions: Array.isArray(row.enemy_questions) ? row.enemy_questions : [],
-    relativeQuestions: Array.isArray(row.relative_questions) ? row.relative_questions : [],
-    assessmentContext: row.assessment_context,
+    learningObjectiveCode: row.learning_objective_code ?? row.learningObjectiveCode,
+    estimatedDifficulty: row.estimated_difficulty ?? row.estimatedDifficulty ?? 'medium',
+    pValue: row.p_value ?? row.pValue ?? null,
+    discriminationIndex: row.discrimination_index ?? row.discriminationIndex ?? null,
+    distractorEfficiency: row.distractor_efficiency ?? row.distractorEfficiency,
+    expectedTime: row.expected_time ?? row.expectedTime ?? 60,
+    averageSolveTime: row.average_solve_time ?? row.averageSolveTime ?? null,
+    enemyQuestions: Array.isArray(row.enemy_questions)
+      ? row.enemy_questions
+      : (Array.isArray(row.enemyQuestions) ? row.enemyQuestions : []),
+    relativeQuestions: Array.isArray(row.relative_questions)
+      ? row.relative_questions
+      : (Array.isArray(row.relativeQuestions) ? row.relativeQuestions : []),
+    assessmentContext: row.assessment_context ?? row.assessmentContext ?? 'summative',
     hint: row.hint,
-    correctExplanation: row.correct_explanation,
-    wrongExplanations: row.wrong_explanations,
+    correctExplanation: row.correct_explanation ?? row.correctExplanation ?? '',
+    wrongExplanations: row.wrong_explanations ?? row.wrongExplanations,
     source: row.source,
-    examYear: row.exam_year,
+    examYear: row.exam_year ?? row.examYear,
     governorate: row.governorate,
-    reviewStatus: row.review_status,
-    contentVersion: row.content_version,
-    normalizedTextHash: row.normalized_text_hash,
+    reviewStatus: row.review_status ?? row.reviewStatus,
+    contentVersion: row.content_version ?? row.contentVersion,
+    normalizedTextHash: row.normalized_text_hash ?? row.normalizedTextHash,
     repetitionCount: typeof row.repetition_count === 'number'
       ? row.repetition_count
-      : (row.repetition_count ? Number(row.repetition_count) : 1),
+      : (typeof row.repetitionCount === 'number'
+          ? row.repetitionCount
+          : (row.repetition_count ? Number(row.repetition_count) : 1)),
     examYears: Array.isArray(row.exam_years) && row.exam_years.length > 0
       ? row.exam_years
-      : (row.exam_year ? [row.exam_year] : []),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    isDuplicate: false,
-    status: 'pending'
+      : (Array.isArray(row.examYears) && row.examYears.length > 0
+          ? row.examYears
+          : (row.exam_year ? [row.exam_year] : (row.examYear ? [row.examYear] : []))),
+    createdAt: row.created_at ?? row.createdAt,
+    updatedAt: row.updated_at ?? row.updatedAt,
+    isDuplicate: Boolean(row.is_duplicate ?? row.isDuplicate),
+    status: row.status ?? 'pending'
   };
+
+  // Provide snake_case mirror property for seamless multi-format consumer compatibility
+  (mapped as any).question_text = text;
+  (mapped as any).option_a = optA;
+  (mapped as any).option_b = optB;
+  (mapped as any).option_c = optC;
+  (mapped as any).option_d = optD;
+  (mapped as any).correct_option = correctOpt;
+
+  return mapped;
 }
 
 export function mapQuestionToQuestionRow(q: Question): QuestionRow {
