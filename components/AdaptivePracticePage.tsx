@@ -6,6 +6,9 @@ import { AdaptiveQuestionCard } from './AdaptiveQuestionCard';
 import { useApp } from '@/context/AppContext';
 import { Trophy, CloudUpload, WifiOff, Target, RefreshCw, Play, CheckCircle2, Brain, BarChart3 } from 'lucide-react';
 import { Section, Grade } from '@/types/index';
+import { playCorrectAnswerSound, playGentleEncouragementSound } from '@/lib/soundEffects';
+import { triggerConfetti } from '@/components/Effects/ConfettiEffect';
+import { triggerMotivationalBanner } from '@/components/Effects/MotivationBanner';
 
 const SUBJECTS = ['الرياضيات', 'الفيزياء', 'الكيمياء', 'الأحياء'];
 
@@ -62,6 +65,14 @@ export const AdaptivePracticePage: React.FC = () => {
 
   const handleAnswered = async (opt: any, timeTaken: number, hintUsed: boolean) => {
     if (!currentQuestion) return;
+    const isCorrect = opt === currentQuestion.correctOption;
+    if (isCorrect) {
+      playCorrectAnswerSound();
+      triggerConfetti('correct');
+      triggerMotivationalBanner({ type: 'correct' });
+    } else {
+      playGentleEncouragementSound();
+    }
     await answer(opt, timeTaken, hintUsed);
     setShowNext(true);
   };

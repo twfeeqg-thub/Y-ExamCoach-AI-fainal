@@ -6,6 +6,17 @@ import { useApp } from '@/context/AppContext';
 import { triggerSupportToast } from '@/components/SupportToast';
 import { getRandomSupportMessage } from '@/lib/psychologicalSupport';
 import {
+  playCorrectAnswerSound,
+  playGentleEncouragementSound,
+  playStreakSound,
+} from '@/lib/soundEffects';
+import { triggerConfetti } from '@/components/Effects/ConfettiEffect';
+import {
+  InlineMotivationBadge,
+  getRandomMotivationalPhrase,
+  MotivationMessage,
+} from '@/components/Effects/MotivationBanner';
+import {
   CheckCircle2,
   XCircle,
   HelpCircle,
@@ -25,6 +36,7 @@ import {
   Layers,
   Award,
   ShieldCheck,
+  RotateCcw,
 } from 'lucide-react';
 
 interface SmartQuestionCardProps {
@@ -39,6 +51,11 @@ export const SmartQuestionCard: React.FC<SmartQuestionCardProps> = ({ question }
   const [showPsychometrics, setShowPsychometrics] = useState<boolean>(false);
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+
+  // Interactive student quiz state
+  const [selectedOption, setSelectedOption] = useState<string | null>(null);
+  const [motivation, setMotivation] = useState<MotivationMessage | null>(null);
+  const [streakCount, setStreakCount] = useState<number>(0);
 
   // Edit Form Fields
   const [editForm, setEditForm] = useState({
@@ -153,6 +170,39 @@ export const SmartQuestionCard: React.FC<SmartQuestionCardProps> = ({ question }
 
   const sourceMeta = getSourceMeta();
 
+  // Interactive student quiz handler
+  const handleSelectOption = (optKey: string) => {
+    if (isEditing) return;
+    setSelectedOption(optKey);
+    const isCorrect = optKey === question.correctOption;
+
+    if (isCorrect) {
+      playCorrectAnswerSound();
+      const nextStreak = streakCount + 1;
+      setStreakCount(nextStreak);
+
+      if (nextStreak === 3 || nextStreak === 5 || nextStreak === 10) {
+        playStreakSound(nextStreak);
+        triggerConfetti('streak');
+        const streakType = nextStreak === 3 ? 'streak3' : nextStreak === 5 ? 'streak5' : 'streak10';
+        setMotivation(getRandomMotivationalPhrase(streakType));
+      } else {
+        triggerConfetti('correct');
+        setMotivation(getRandomMotivationalPhrase('correct'));
+      }
+    } else {
+      playGentleEncouragementSound();
+      setStreakCount(0);
+      setMotivation(null);
+      setShowExplanations(true);
+    }
+  };
+
+  const handleResetAttempt = () => {
+    setSelectedOption(null);
+    setMotivation(null);
+  };
+
   return (
     <div
       className={`bg-white dark:bg-slate-900 border rounded-3xl p-4 md:p-6 transition-all duration-200 shadow-sm hover:shadow-md relative space-y-4 ${
@@ -245,46 +295,102 @@ export const SmartQuestionCard: React.FC<SmartQuestionCardProps> = ({ question }
             {question.questionText}
           </div>
 
+          {/* Motivational Banner on Correct/Streak Answer */}
+          {motivation && (
+            <InlineMotivationBadge
+              message={motivation}
+              onDismiss={() => setMotivation(null)}
+            />
+          )}
+
           {/* Multiple Choice Options Grid (Mobile-First: 1 Column Full Width Tap Targets, Desktop: 2 Columns) */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1">
-            {[
-              { key: 'A', text: question.optionA },
-              { key: 'B', text: question.optionB },
-              { key: 'C', text: question.optionC },
-              { key: 'D', text: question.optionD },
-            ]
-              .filter((opt) => opt.text && opt.text.trim().length > 0)
-              .map((opt) => {
-                const isCorrect = question.correctOption === opt.key;
+          <div className="space-y-2">
+            {!selectedOption && (
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 font-semibold flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                <span>جرّب إجابتك: اضغط على الخيار الذي تراه صحيحاً لاختبار فهمك!</span>
+              </div>
+            )}
 
-                return (
-                  <div
-                    key={opt.key}
-                    className={`p-3.5 md:p-4 rounded-2xl border flex items-center justify-between transition-all min-h-[52px] ${
-                      isCorrect
-                        ? 'bg-emerald-50 dark:bg-emerald-950/50 border-emerald-500 text-emerald-950 dark:text-emerald-100 font-bold ring-2 ring-emerald-500/20 shadow-sm'
-                        : 'bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 font-medium'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <span
-                        className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs shrink-0 ${
-                          isCorrect
-                            ? 'bg-emerald-600 text-white shadow-md shadow-emerald-500/30'
-                            : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
-                        }`}
-                      >
-                        {opt.key}
-                      </span>
-                      <span className="text-sm md:text-base leading-snug">{opt.text}</span>
-                    </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1">
+              {[
+                { key: 'A', text: question.optionA },
+                { key: 'B', text: question.optionB },
+                { key: 'C', text: question.optionC },
+                { key: 'D', text: question.optionD },
+              ]
+                .filter((opt) => opt.text && opt.text.trim().length > 0)
+                .map((opt) => {
+                  const isCorrect = question.correctOption === opt.key;
+                  const isSelected = selectedOption === opt.key;
 
-                    {isCorrect && (
-                      <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                    )}
-                  </div>
-                );
-              })}
+                  let cardStyle = 'bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 font-medium hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50/40 dark:hover:bg-blue-950/30 cursor-pointer active:scale-[0.99]';
+                  let badgeStyle = 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300';
+
+                  if (selectedOption !== null) {
+                    if (isCorrect) {
+                      cardStyle = 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-500 text-emerald-950 dark:text-emerald-100 font-bold ring-2 ring-emerald-500/20 shadow-sm';
+                      badgeStyle = 'bg-emerald-600 text-white shadow-md shadow-emerald-500/30';
+                    } else if (isSelected) {
+                      cardStyle = 'bg-rose-50 dark:bg-rose-950/60 border-rose-500 text-rose-950 dark:text-rose-100 font-bold ring-2 ring-rose-500/20 shadow-sm';
+                      badgeStyle = 'bg-rose-600 text-white shadow-md shadow-rose-500/30';
+                    } else {
+                      cardStyle = 'bg-slate-50/50 dark:bg-slate-800/30 border-slate-200/60 dark:border-slate-800/60 text-slate-400 dark:text-slate-500 opacity-60';
+                    }
+                  }
+
+                  return (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => handleSelectOption(opt.key)}
+                      className={`p-3.5 md:p-4 rounded-2xl border flex items-center justify-between text-right transition-all min-h-[52px] ${cardStyle}`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs shrink-0 transition ${badgeStyle}`}
+                        >
+                          {opt.key}
+                        </span>
+                        <span className="text-sm md:text-base leading-snug">{opt.text}</span>
+                      </div>
+
+                      {selectedOption !== null && isCorrect && (
+                        <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      )}
+                      {selectedOption !== null && isSelected && !isCorrect && (
+                        <XCircle className="w-5 h-5 text-rose-600 dark:text-rose-400 shrink-0" />
+                      )}
+                    </button>
+                  );
+                })}
+            </div>
+
+            {selectedOption && (
+              <div className="flex items-center justify-between pt-1 px-1 text-xs">
+                <span className="font-bold flex items-center gap-1.5">
+                  {selectedOption === question.correctOption ? (
+                    <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>إجابة صحيحة ومتقنة! 🎉</span>
+                    </span>
+                  ) : (
+                    <span className="text-rose-600 dark:text-rose-400 flex items-center gap-1">
+                      <XCircle className="w-4 h-4" />
+                      <span>إجابة غير صحيحة، طالع التفسير التعليمي أدناه 👇</span>
+                    </span>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleResetAttempt}
+                  className="flex items-center gap-1 text-blue-600 hover:text-blue-700 dark:text-blue-400 font-bold cursor-pointer transition hover:underline"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>إعادة المحاولة</span>
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Pedagogy & Bloom Badges Row (Bottom Circular Badges) */}

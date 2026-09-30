@@ -12,6 +12,9 @@ import { LessonUploadForm } from './LessonUploadForm';
 import { MathText } from './MathText';
 import { triggerSupportToast } from './SupportToast';
 import { trackLessonRead } from '@/lib/studyTracker';
+import { playLessonCompleteSound } from '@/lib/soundEffects';
+import { triggerConfetti } from '@/components/Effects/ConfettiEffect';
+import { triggerMotivationalBanner } from '@/components/Effects/MotivationBanner';
 import { FlashcardsModal } from './Lesson/FlashcardsModal';
 import { MindMapViewerModal } from './Lesson/MindMapViewerModal';
 import {
@@ -695,6 +698,9 @@ export const LessonManagementPage: React.FC = () => {
                       <button
                         onClick={() => {
                           trackLessonRead(lesson.id, lesson.subject);
+                          playLessonCompleteSound();
+                          triggerConfetti('lessonComplete');
+                          triggerMotivationalBanner({ type: 'lesson' });
                           triggerSupportToast({
                             title: 'إنجاز رائع! أتممت قراءة الدرس 🎉',
                             message: `تمت إضافة +25 XP إلى رصيدك لمادة ${lesson.subject}. واصل التقدم!`,

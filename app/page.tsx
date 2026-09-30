@@ -12,6 +12,9 @@ import { ParentDashboard } from '@/components/ParentDashboard';
 import { GamificationHeaderBar } from '@/components/Gamification/GamificationHeaderBar';
 import { BadgesShowcaseModal } from '@/components/Gamification/BadgesShowcaseModal';
 import { AchievementToast } from '@/components/Gamification/AchievementToast';
+import { ConfettiEffect } from '@/components/Effects/ConfettiEffect';
+import { MotivationBanner } from '@/components/Effects/MotivationBanner';
+import { useSoundPreference } from '@/lib/soundEffects';
 import {
   PSYCHOLOGICAL_MESSAGES,
   getRandomSupportMessage,
@@ -29,12 +32,15 @@ import {
   Heart,
   Target,
   BookOpen,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 
 export default function HomePage() {
   const [activeTab, setActiveTab] = useState<'upload' | 'questions' | 'lessons' | 'practice' | 'settings'>('upload');
   const [isBadgesModalOpen, setIsBadgesModalOpen] = useState<boolean>(false);
   const { stats, settings, updateUserSettings, databaseStatus } = useApp();
+  const { soundEnabled, toggleSound } = useSoundPreference();
   const [quote, setQuote] = useState<string>('');
 
   useEffect(() => {
@@ -65,6 +71,8 @@ export default function HomePage() {
       {/* Toast Notification Container */}
       <SupportToast />
       <AchievementToast />
+      <ConfettiEffect />
+      <MotivationBanner />
 
       {/* Top Header Navigation Bar (Desktop & Tablet) */}
       <header className="sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 shadow-sm">
@@ -161,6 +169,25 @@ export default function HomePage() {
 
           {/* Right Controls */}
           <div className="flex items-center gap-2">
+            {/* Sound Toggle Button */}
+            <button
+              type="button"
+              onClick={toggleSound}
+              className={`p-2 rounded-xl transition min-h-[44px] min-w-[44px] flex items-center justify-center cursor-pointer border ${
+                soundEnabled
+                  ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/60'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-700 hover:text-slate-700 dark:hover:text-slate-300'
+              }`}
+              title={soundEnabled ? 'كتم المؤثرات الصوتية' : 'تفعيل المؤثرات الصوتية'}
+              aria-label={soundEnabled ? 'كتم المؤثرات الصوتية' : 'تفعيل المؤثرات الصوتية'}
+            >
+              {soundEnabled ? (
+                <Volume2 className="w-5 h-5" />
+              ) : (
+                <VolumeX className="w-5 h-5" />
+              )}
+            </button>
+
             <button
               onClick={() => updateUserSettings({ isDarkMode: !settings.isDarkMode })}
               className="p-2 text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 bg-slate-100 dark:bg-slate-800 rounded-xl transition min-h-[44px] min-w-[44px] flex items-center justify-center"

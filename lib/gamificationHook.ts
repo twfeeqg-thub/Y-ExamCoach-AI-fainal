@@ -7,6 +7,7 @@ import {
   GamificationEventResult,
 } from '@/types/index';
 import {
+  DEFAULT_STATE,
   getGamificationState,
   calculateLevelBounds,
   calculateLevelProgress,
@@ -18,6 +19,7 @@ import {
 
 export interface UseGamificationReturn {
   state: StudentGamificationState;
+  isMounted: boolean;
   levelProgress: number;
   currentBaseXP: number;
   nextLevelXP: number;
@@ -33,7 +35,8 @@ export interface UseGamificationReturn {
 }
 
 export function useGamification(): UseGamificationReturn {
-  const [state, setState] = useState<StudentGamificationState>(() => getGamificationState());
+  const [state, setState] = useState<StudentGamificationState>(DEFAULT_STATE);
+  const [isMounted, setIsMounted] = useState<boolean>(false);
   const [isBadgesModalOpen, setIsBadgesModalOpen] = useState<boolean>(false);
 
   const refreshState = useCallback(() => {
@@ -41,7 +44,8 @@ export function useGamification(): UseGamificationReturn {
   }, []);
 
   useEffect(() => {
-    // Synchronize initial state on mount
+    setIsMounted(true);
+    // Synchronize stored state from localStorage on client mount (avoids hydration mismatch)
     refreshState();
 
     const handleUpdate = () => {
@@ -81,6 +85,7 @@ export function useGamification(): UseGamificationReturn {
 
   return {
     state,
+    isMounted,
     levelProgress,
     currentBaseXP,
     nextLevelXP,

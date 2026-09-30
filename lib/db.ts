@@ -73,6 +73,8 @@ const memStudentResponses: StudentResponse[] = [];
 
 const memStudentProfiles: StudentProfile[] = [];
 
+const memStudentGamification: Record<string, StudentGamificationState> = {};
+
 const memQuestions: Question[] = [
   {
     id: 'q101-math-sample',
@@ -319,7 +321,7 @@ export async function ensureSchema(): Promise<void> {
     );
 
     CREATE TABLE IF NOT EXISTS smart_exam_engine.student_gamification (
-      student_id UUID PRIMARY KEY,
+      student_id TEXT PRIMARY KEY,
       xp INT NOT NULL DEFAULT 0,
       level INT NOT NULL DEFAULT 1,
       current_streak INT NOT NULL DEFAULT 0,
@@ -1505,15 +1507,58 @@ export async function deleteLesson(id: string): Promise<boolean> {
 // 8. Student Gamification Synchronization (Dual-Mode: Cloud DB + Offline)
 // ---------------------------------------------------------------------------
 
+export async function getStudentGamification(
+  studentId: string
+): Promise<StudentGamificationState | null> {
+  if (!studentId) return null;
+  if (isInMemoryFallback) {
+    return memStudentGamification[studentId] || null;
+  }
+
+  try {
+    await ensureSchema();
+    if (isInMemoryFallback) return memStudentGamification[studentId] || null;
+    const res = await query(
+      `SELECT * FROM smart_exam_engine.student_gamification WHERE student_id = $1 LIMIT 1;`,
+      [studentId]
+    );
+    if (res.rows && res.rows.length > 0) {
+      const row = res.rows[0];
+      return {
+        xp: Number(row.xp) || 0,
+        level: Number(row.level) || 1,
+        currentStreak: Number(row.current_streak) || 0,
+        longestStreak: Number(row.longest_streak) || 0,
+        unlockedBadges: Array.isArray(row.unlocked_badges) ? row.unlocked_badges : [],
+        lastActiveDate: row.last_active_date ? new Date(row.last_active_date).toISOString().split('T')[0] : undefined,
+        totalCorrect: Number(row.total_correct) || 0,
+        completedLessonIds: Array.isArray(row.completed_lesson_ids) ? row.completed_lesson_ids : [],
+        subjectCounts: typeof row.subject_counts === 'object' && row.subject_counts !== null ? row.subject_counts : {},
+        maxMasteryScore: Number(row.max_mastery_score) || 0,
+      };
+    }
+    return memStudentGamification[studentId] || null;
+  } catch {
+    isInMemoryFallback = true;
+    return memStudentGamification[studentId] || null;
+  }
+}
+
 export async function syncGamificationWithDB(
   studentId: string,
   state: StudentGamificationState
 ): Promise<boolean> {
   if (!studentId || !state) return false;
+
+  // Always update in-memory cache so in-memory and offline modes work seamlessly
+  memStudentGamification[studentId] = { ...state };
+
   if (isInMemoryFallback) return true;
 
   try {
     await ensureSchema();
+    if (isInMemoryFallback) return true;
+
     const sql = `
       INSERT INTO smart_exam_engine.student_gamification (
         student_id, xp, level, current_streak, longest_streak,
@@ -1554,9 +1599,9 @@ export async function syncGamificationWithDB(
 
     await query(sql, values);
     return true;
-  } catch (error) {
-    console.warn('[Database] Silent syncGamificationWithDB fallback:', error);
-    return false;
+  } catch {
+    isInMemoryFallback = true;
+    return true;
   }
 }
 

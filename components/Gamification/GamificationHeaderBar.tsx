@@ -45,7 +45,7 @@ export const GamificationHeaderBar: React.FC<GamificationHeaderBarProps> = ({
         <div className="relative group shrink-0">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-400 via-amber-500 to-yellow-600 text-slate-950 font-black flex flex-col items-center justify-center shadow-md shadow-amber-500/20 border border-amber-300">
             <Crown className="w-3.5 h-3.5 text-amber-950 -mb-0.5" />
-            <span className="text-xs font-black font-mono leading-none">{state.level}</span>
+            <span suppressHydrationWarning className="text-xs font-black font-mono leading-none">{state.level}</span>
           </div>
           <span className="absolute -bottom-1 -right-1 flex h-3 w-3">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
@@ -57,16 +57,16 @@ export const GamificationHeaderBar: React.FC<GamificationHeaderBarProps> = ({
         <div className="flex-1 min-w-[120px] space-y-1">
           <div className="flex items-center justify-between text-[11px] font-bold">
             <div className="flex items-center gap-1.5 text-slate-900 dark:text-slate-100">
-              <span className="text-amber-600 dark:text-amber-400 font-extrabold">
+              <span suppressHydrationWarning className="text-amber-600 dark:text-amber-400 font-extrabold">
                 المستوى {state.level}
               </span>
               <span className="text-slate-400 font-normal hidden sm:inline">• رصيدك:</span>
-              <span className="font-mono text-slate-700 dark:text-slate-300">
+              <span suppressHydrationWarning className="font-mono text-slate-700 dark:text-slate-300">
                 {state.xp} XP
               </span>
             </div>
 
-            <span className="text-slate-500 dark:text-slate-400 font-mono text-[10px]">
+            <span suppressHydrationWarning className="text-slate-500 dark:text-slate-400 font-mono text-[10px]">
               {currentLevelXP}/{neededLevelXP} XP ({levelProgress}%)
             </span>
           </div>

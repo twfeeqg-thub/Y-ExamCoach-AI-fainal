@@ -1,5 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { syncGamificationWithDB } from '@/lib/db';
+import { syncGamificationWithDB, getStudentGamification } from '@/lib/db';
+
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const studentId = searchParams.get('studentId');
+    if (!studentId) {
+      return NextResponse.json({ success: false, error: 'Student ID required' }, { status: 400 });
+    }
+    const data = await getStudentGamification(studentId);
+    return NextResponse.json({ success: true, data });
+  } catch (error: any) {
+    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,10 +27,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const success = await syncGamificationWithDB(studentId, state);
-    return NextResponse.json({ success });
+    await syncGamificationWithDB(studentId, state);
+    return NextResponse.json({ success: true });
   } catch (error: any) {
-    console.error('API /api/student/gamification error:', error);
     return NextResponse.json(
       { success: false, error: error.message || 'Failed to sync gamification' },
       { status: 500 }

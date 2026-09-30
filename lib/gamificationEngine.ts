@@ -157,7 +157,7 @@ export function calculateLevelProgress(xp: number, level: number): number {
 // State Access & Initialization
 // ---------------------------------------------------------------------------
 
-const DEFAULT_STATE: StudentGamificationState = {
+export const DEFAULT_STATE: StudentGamificationState = {
   xp: 0,
   level: 1,
   currentStreak: 0,
