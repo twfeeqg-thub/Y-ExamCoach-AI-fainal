@@ -2,19 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { insertFile, insertQuestion } from '@/lib/db';
 import { QuestionInput, FileInput } from '@/types/index';
-
-// Define the structure of the incoming JSON payload for validation
-interface ImportPayload {
-  fileName: string;
-  questions: QuestionInput[];
-  metadata?: Partial<{
-    grade: '9' | '12';
-    section: 'علمي' | 'أدبي' | 'تجاري' | 'شرعي' | 'أساسي';
-    subject: string;
-    examYear: number;
-    governorate: string;
-  }>;
-}
+import { normalizeQuestionImportPayload } from '@/lib/jsonRepair';
 
 /**
  * API Route for bulk importing questions from a JSON structure.
@@ -22,45 +10,40 @@ interface ImportPayload {
  */
 export async function POST(request: NextRequest) {
   try {
-    const body: ImportPayload = await request.json();
+    const rawBody = await request.json();
+    const normalized = normalizeQuestionImportPayload(rawBody, `Import-${new Date().toISOString().slice(0, 10)}.json`);
 
-    // 1. Validate the incoming payload
-    if (!body.fileName || !Array.isArray(body.questions) || body.questions.length === 0) {
+    // 1. Validate the normalized payload
+    if (!normalized.questions || normalized.questions.length === 0) {
       return NextResponse.json(
-        { success: false, error: 'Invalid payload. "fileName" and a non-empty "questions" array are required.' },
+        { success: false, error: 'Invalid payload. At least one valid question is required.' },
         { status: 400 }
       );
     }
 
     // 2. Create a virtual file record for this import operation
     const fileInput: FileInput = {
-      name: body.fileName,
-      size: JSON.stringify(body.questions).length, // Approximate size
+      name: normalized.fileName,
+      size: JSON.stringify(normalized.questions).length, // Approximate size
       fileType: 'other',
-      grade: body.metadata?.grade || '12',
-      section: body.metadata?.section || 'علمي',
-      subject: body.metadata?.subject || 'مستورد',
-      examYear: body.metadata?.examYear || new Date().getFullYear(),
-      governorate: body.metadata?.governorate || 'المركزية',
+      grade: (normalized.metadata?.grade as any) || normalized.questions[0]?.grade || 12,
+      section: (normalized.metadata?.section as any) || normalized.questions[0]?.section || 'علمي',
+      subject: normalized.metadata?.subject || normalized.questions[0]?.subject || 'مستورد',
+      examYear: normalized.metadata?.examYear || normalized.questions[0]?.examYear || new Date().getFullYear(),
+      governorate: normalized.metadata?.governorate || normalized.questions[0]?.governorate || 'المركزية',
     };
 
     const fileRecord = await insertFile(fileInput);
 
-
     if (!fileRecord) {
       throw new Error('Failed to create a file record for the import.');
     }
-    
-    // Add extractedQuestionsCount to the fileRecord after insertion if needed by business logic
-    // For now, we assume the DB handles the final state.
 
     // 3. Iterate and insert each question, tracking results
     let insertedCount = 0;
     let ignoredCount = 0;
 
-    for (const questionInput of body.questions) {
-      // The insertQuestion function from db.ts already handles the logic for
-      // sanitization, hashing, and duplicate checking (ON CONFLICT... DO NOTHING).
+    for (const questionInput of normalized.questions) {
       const result = await insertQuestion(fileRecord.id, questionInput);
       
       if (result.status === 'inserted') {
@@ -74,11 +57,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         success: true,
-        message: `Import from "${body.fileName}" completed.`,
+        message: `Import from "${fileRecord.name}" completed.`,
         data: {
           fileId: fileRecord.id,
           fileName: fileRecord.name,
-          totalQuestionsInPayload: body.questions.length,
+          totalQuestionsInPayload: normalized.questions.length,
           insertedCount,
           ignoredCount,
         },
@@ -88,7 +71,6 @@ export async function POST(request: NextRequest) {
 
   } catch (error: any) {
     console.error('[API /api/import]', error);
-    // Handle potential JSON parsing errors
     if (error instanceof SyntaxError) {
       return NextResponse.json({ success: false, error: 'Invalid JSON format.' }, { status: 400 });
     }

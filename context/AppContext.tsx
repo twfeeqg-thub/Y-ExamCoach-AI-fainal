@@ -129,6 +129,8 @@ const FALLBACK_QUESTIONS: Question[] = [
     reviewStatus: 'approved',
     contentVersion: 1,
     normalizedTextHash: 'hash-sample-101',
+    repetitionCount: 3,
+    examYears: [2018, 2021, 2024],
     isDuplicate: false,
     status: 'inserted',
   },
@@ -175,6 +177,8 @@ const FALLBACK_QUESTIONS: Question[] = [
     reviewStatus: 'approved',
     contentVersion: 1,
     normalizedTextHash: 'hash-sample-102',
+    repetitionCount: 1,
+    examYears: [2024],
     isDuplicate: false,
     status: 'inserted',
   },
@@ -219,6 +223,8 @@ const FALLBACK_QUESTIONS: Question[] = [
     reviewStatus: 'approved',
     contentVersion: 1,
     normalizedTextHash: 'hash-sample-103',
+    repetitionCount: 2,
+    examYears: [2022, 2024],
     isDuplicate: false,
     status: 'inserted',
   },
@@ -481,32 +487,111 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const importJsonQuestions = async (payload: JsonImportInput): Promise<ImportResult> => {
     addLogMessage('info', 'JsonImport', `بدء استيراد الأسئلة من ملف: ${payload.fileName}`);
     try {
-      if (databaseStatus === 'offline') {
-        throw new Error('لا يمكن استيراد ملفات JSON في وضع عدم الاتصال.');
-      }
-
+      // 1. Try server-side API import first
       const res = await fetch('/api/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
 
-      const result = await res.json();
-
-      if (!res.ok || !result.success) {
-        throw new Error(result.error || `فشل استيراد الملف (${res.status})`);
+      if (res.ok) {
+        const result = await res.json();
+        if (result.success && result.data) {
+          addLogMessage(
+            'success',
+            'JsonImport',
+            `اكتمل الاستيراد عبر الخادم: ${result.data.insertedCount} سؤال جديد, ${result.data.ignoredCount} مكرر.`
+          );
+          await refreshData();
+          return result.data;
+        }
       }
 
-      addLogMessage('success', 'JsonImport', `اكتمل الاستيراد: ${result.data.insertedCount} سؤال جديد, ${result.data.ignoredCount} مكرر.`);
-      
-      // Refresh data to get the new file and questions
-      await refreshData();
+      // 2. Offline fallback if server API is unavailable
+      const localFileId = 'f-import-' + Math.random().toString(36).substring(2, 9);
+      const newFile: UploadedFile = {
+        id: localFileId,
+        name: payload.fileName,
+        size: JSON.stringify(payload.questions).length,
+        fileType: 'other',
+        previewUrl: null,
+        grade: (payload.metadata?.grade as any) || '12',
+        section: (payload.metadata?.section as any) || 'علمي',
+        subject: payload.metadata?.subject || 'مستورد',
+        examYear: payload.metadata?.examYear || 2024,
+        governorate: payload.metadata?.governorate || 'المركزية',
+        status: 'completed',
+        progress: 100,
+        step: 'completed',
+        extractedQuestionsCount: payload.questions.length,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
 
-      return result.data;
+      let insertedCount = 0;
+      let ignoredCount = 0;
+      const newMappedQuestions: Question[] = [];
+
+      for (const q of payload.questions) {
+        const qYears = Array.isArray(q.examYears) && q.examYears.length > 0 ? q.examYears : (q.examYear ? [q.examYear] : [2024]);
+        const newQ: Question = {
+          id: 'q-local-' + Math.random().toString(36).substring(2, 9),
+          fileId: localFileId,
+          fileName: payload.fileName,
+          questionText: q.questionText,
+          questionType: q.questionType || 'multiple_choice',
+          optionA: q.optionA,
+          optionB: q.optionB,
+          optionC: q.optionC || null,
+          optionD: q.optionD || null,
+          correctOption: q.correctOption,
+          grade: q.grade || 12,
+          section: q.section || 'علمي',
+          subject: q.subject || 'عام',
+          unit: q.unit || 'الوحدة الأولى',
+          lesson: q.lesson || 'الدرس الأول',
+          learningObjectiveCode: q.learningObjectiveCode || null,
+          estimatedDifficulty: q.estimatedDifficulty || 'medium',
+          pValue: q.pValue || 0.7,
+          discriminationIndex: q.discriminationIndex || 0.4,
+          distractorEfficiency: q.distractorEfficiency || null,
+          expectedTime: q.expectedTime || 60,
+          averageSolveTime: q.averageSolveTime || null,
+          enemyQuestions: q.enemyQuestions || [],
+          relativeQuestions: q.relativeQuestions || [],
+          assessmentContext: q.assessmentContext || 'summative',
+          hint: q.hint || null,
+          correctExplanation: q.correctExplanation || 'إجابة نموذجية',
+          wrongExplanations: q.wrongExplanations || null,
+          source: q.source || 'مستورد من JSON',
+          examYear: qYears[qYears.length - 1],
+          governorate: q.governorate || 'المركزية',
+          reviewStatus: q.reviewStatus || 'approved',
+          contentVersion: 1,
+          normalizedTextHash: 'hash-' + Math.random().toString(36).substring(2, 9),
+          repetitionCount: q.repetitionCount || (qYears.length > 1 ? qYears.length : 1),
+          examYears: qYears,
+          isDuplicate: false,
+          status: 'inserted',
+        };
+        newMappedQuestions.push(newQ);
+        insertedCount++;
+      }
+
+      setFiles((prev) => [newFile, ...prev]);
+      setQuestions((prev) => [...newMappedQuestions, ...prev]);
+      addLogMessage('success', 'JsonImport', `اكتمل الاستيراد محلياً: ${insertedCount} سؤال جديد.`);
+
+      return {
+        fileId: localFileId,
+        fileName: payload.fileName,
+        totalQuestionsInPayload: payload.questions.length,
+        insertedCount,
+        ignoredCount,
+      };
 
     } catch (error: any) {
       addLogMessage('error', 'JsonImport', `فشل استيراد ملف JSON: ${error.message}`);
-      // Re-throw the error to be caught by the calling component
       throw error;
     }
   };

@@ -6,6 +6,12 @@ import { FileInput, UploadedFile, QuestionInput } from '@/types/index';
 import { triggerSupportToast } from '@/components/SupportToast';
 import { getRandomSupportMessage } from '@/lib/psychologicalSupport';
 import {
+  robustParseJson,
+  repairJsonString,
+  normalizeQuestionImportPayload,
+  SAMPLE_QUESTIONS_JSON,
+} from '@/lib/jsonRepair';
+import {
   UploadCloud,
   FileText,
   CheckCircle2,
@@ -25,6 +31,8 @@ import {
   Heart,
   FileJson,
   ClipboardPaste,
+  Wrench,
+  HelpCircle,
 } from 'lucide-react';
 
 export const UploadPage: React.FC = () => {
@@ -44,6 +52,7 @@ export const UploadPage: React.FC = () => {
   const [showMetadataModal, setShowMetadataModal] = useState<boolean>(false);
   const [showJsonPasteModal, setShowJsonPasteModal] = useState<boolean>(false);
   const [jsonPasteContent, setJsonPasteContent] = useState('');
+  const [jsonPasteError, setJsonPasteError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   // File Input Refs
@@ -154,13 +163,29 @@ export const UploadPage: React.FC = () => {
     reader.onload = (event) => {
       try {
         const content = event.target?.result as string;
-        const data = JSON.parse(content);
-        handleJsonImport(data, file.name);
-      } catch (error) {
+        const parseRes = robustParseJson(content);
+        if (!parseRes.success) {
+          triggerSupportToast({
+            title: 'ملف JSON غير صالح',
+            message: parseRes.errorMessage || 'تعذر تحليل الملف. يرجى التأكد من التنسيق.',
+            type: 'error',
+          });
+          return;
+        }
+        const normalized = normalizeQuestionImportPayload(parseRes.data, file.name);
+        if (parseRes.repaired) {
+          triggerSupportToast({
+            title: 'تم إصلاح بنية الملف تلقائياً',
+            message: 'تم تصحيح الأخطاء البنائية والقيم الناقصة في ملف JSON بنجاح.',
+            type: 'info',
+          });
+        }
+        handleJsonImport(normalized, normalized.fileName);
+      } catch (error: any) {
         console.error('Error parsing JSON file:', error);
         triggerSupportToast({
           title: 'ملف JSON غير صالح',
-          message: 'تعذر تحليل الملف. يرجى التأكد من أن الملف يحتوي على تنسيق JSON صحيح.',
+          message: error?.message || 'تعذر قراءة محتوى الملف.',
           type: 'error',
         });
       }
@@ -168,28 +193,93 @@ export const UploadPage: React.FC = () => {
     reader.readAsText(file);
   };
 
+  const handleApplySampleJson = () => {
+    setJsonPasteContent(SAMPLE_QUESTIONS_JSON);
+    setJsonPasteError(null);
+    triggerSupportToast({
+      title: 'تم إدراج النموذج التجريبي',
+      message: 'يتضمن النموذج بنية أسئلة كاملة تدعم examYears وتكرارات الامتحانات الوزارية.',
+      type: 'info',
+    });
+  };
+
+  const handleRepairAndFormat = () => {
+    if (!jsonPasteContent.trim()) {
+      triggerSupportToast({
+        title: 'النص فارغ',
+        message: 'يرجى لصق نص JSON أولاً ليتم فحصه وإصلاحه.',
+        type: 'warning',
+      });
+      return;
+    }
+    const result = robustParseJson(jsonPasteContent);
+    if (result.success && result.data) {
+      const formatted = JSON.stringify(result.data, null, 2);
+      setJsonPasteContent(formatted);
+      setJsonPasteError(null);
+      triggerSupportToast({
+        title: result.repaired ? 'تم إصلاح وتنسيق JSON بنجاح' : 'الكود متوافق وسليم',
+        message: result.repaired
+          ? 'تم استدراك الفواصل الزائدة والقيم الناقصة (مثل examYears) وتنسيق النص.'
+          : 'بنية JSON ممتازة ومتناسقة تماماً.',
+        type: 'success',
+      });
+    } else {
+      setJsonPasteError(result.errorMessage || 'تعذر إصلاح النص تلقائياً. تأكد من إغلاق الأقواس.');
+    }
+  };
+
   const handlePasteModalSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      const data = JSON.parse(jsonPasteContent);
-      await handleJsonImport(data, `PastedContent-${new Date().toISOString()}.json`);
-      setShowJsonPasteModal(false);
-      setJsonPasteContent('');
-    } catch (error) {
-      console.error('Error parsing pasted JSON:', error);
+    setJsonPasteError(null);
+
+    const parseRes = robustParseJson(jsonPasteContent);
+    if (!parseRes.success) {
+      console.error('Error parsing pasted JSON:', parseRes.errorMessage);
+      setJsonPasteError(parseRes.errorMessage || 'خطأ في تنسيق JSON. تحقق من الأقواس والقيم.');
       triggerSupportToast({
         title: 'نص JSON غير صالح',
-        message: 'تعذر تحليل النص. يرجى التأكد من أن النص الذي تم لصقه هو بتنسيق JSON صحيح.',
+        message: parseRes.errorMessage || 'تعذر تحليل النص. يمكنك النقر على "إصلاح وتنسيق" لتصحيحه.',
+        type: 'error',
+      });
+      return;
+    }
+
+    try {
+      const normalized = normalizeQuestionImportPayload(
+        parseRes.data,
+        `PastedContent-${new Date().toISOString().slice(0, 10)}.json`
+      );
+
+      if (parseRes.repaired) {
+        triggerSupportToast({
+          title: 'تم إصلاح بنية JSON تلقائياً',
+          message: 'تم تجاوز الأخطاء النحوية (مثل examYears أو الفواصل) واستيراد الأسئلة بنجاح.',
+          type: 'success',
+        });
+      }
+
+      await handleJsonImport(normalized, normalized.fileName);
+      setShowJsonPasteModal(false);
+      setJsonPasteContent('');
+      setJsonPasteError(null);
+    } catch (error: any) {
+      console.error('Failed to import pasted questions:', error);
+      triggerSupportToast({
+        title: 'فشل استيراد الأسئلة',
+        message: error?.message || 'حدث خطأ أثناء استيراد الأسئلة.',
         type: 'error',
       });
     }
   };
 
-  const handleJsonImport = async (data: { questions: QuestionInput[], [key: string]: any }, fileName: string) => {
-    if (!data.questions || !Array.isArray(data.questions)) {
+  const handleJsonImport = async (data: any, fileName: string) => {
+    const normalized = normalizeQuestionImportPayload(data, fileName);
+
+    if (!normalized.questions || !Array.isArray(normalized.questions) || normalized.questions.length === 0) {
       triggerSupportToast({
         title: 'بنية JSON غير متوافقة',
-        message: 'يجب أن يحتوي الكائن الجذري على خاصية "questions" وهي عبارة عن مصفوفة.',
+        message: 'لم يتم العثور على أي أسئلة صالحة للاستيراد في المحتوى.',
         type: 'error',
       });
       return;
@@ -198,14 +288,14 @@ export const UploadPage: React.FC = () => {
     setIsSubmitting(true);
     try {
       const result = await importJsonQuestions({
-        fileName,
-        questions: data.questions,
-        metadata: data.metadata || {},
+        fileName: normalized.fileName,
+        questions: normalized.questions,
+        metadata: normalized.metadata || {},
       });
 
       triggerSupportToast({
         title: 'اكتمل استيراد JSON',
-        message: `تم بنجاح إدراج ${result.insertedCount} سؤالاً وتجاهل ${result.ignoredCount} سؤالاً مكرراً.`,
+        message: `تم بنجاح إدراج ${result.insertedCount} سؤالاً، والتعامل مع ${result.ignoredCount} سؤالاً مكرراً/محدثاً.`,
         type: 'success',
       });
 
@@ -317,22 +407,141 @@ export const UploadPage: React.FC = () => {
       
       {/* JSON Paste Modal */}
       {showJsonPasteModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl max-w-2xl w-full p-6 space-y-4">
-            <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">لصق محتوى JSON</h3>
-            <form onSubmit={handlePasteModalSubmit}>
-              <textarea
-                value={jsonPasteContent}
-                onChange={(e) => setJsonPasteContent(e.target.value)}
-                placeholder='{ "fileName": "MyPastedQuestions.json", "questions": [ ... ] }'
-                className="w-full h-64 p-3 border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800 font-mono text-xs"
-                required
-              />
-              <div className="flex items-center justify-end gap-3 pt-4">
-                <button type="button" onClick={() => setShowJsonPasteModal(false)} className="px-4 py-2 border rounded-xl">إلغاء</button>
-                <button type="submit" disabled={isSubmitting || !jsonPasteContent} className="px-5 py-2 bg-blue-600 text-white font-bold rounded-xl disabled:opacity-50">
-                  {isSubmitting ? 'جاري الاستيراد...' : 'تأكيد واستيراد'}
+        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-3 md:p-4 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl max-w-3xl w-full p-5 md:p-6 space-y-4">
+            
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-xl bg-violet-50 dark:bg-violet-950/60 text-violet-600 dark:text-violet-400">
+                  <ClipboardPaste className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base md:text-lg font-bold text-slate-900 dark:text-slate-100">
+                    لصق واستيراد كود JSON
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    يدعم مصفوفات الأسئلة، ومعالجة القيم التالفة أو الناقصة (مثل examYears) تلقائياً.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowJsonPasteModal(false);
+                  setJsonPasteError(null);
+                }}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-2 rounded-xl transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Quick Actions Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-2xl border border-slate-200/80 dark:border-slate-700/60 text-xs">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleApplySampleJson}
+                  className="px-3 py-1.5 bg-violet-100 hover:bg-violet-200 dark:bg-violet-900/40 dark:hover:bg-violet-900/60 text-violet-700 dark:text-violet-300 font-bold rounded-xl transition flex items-center gap-1.5"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>إدراج نموذج وزاري جاهز</span>
                 </button>
+                <button
+                  type="button"
+                  onClick={handleRepairAndFormat}
+                  className="px-3 py-1.5 bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/40 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold rounded-xl transition flex items-center gap-1.5"
+                >
+                  <Wrench className="w-3.5 h-3.5" />
+                  <span>فحص وإصلاح تلقائي</span>
+                </button>
+              </div>
+
+              {jsonPasteContent && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setJsonPasteContent('');
+                    setJsonPasteError(null);
+                  }}
+                  className="text-slate-500 hover:text-rose-600 px-2 py-1 text-[11px] font-semibold"
+                >
+                  مسح النص
+                </button>
+              )}
+            </div>
+
+            {/* Error Notification Banner if JSON has syntax error */}
+            {jsonPasteError && (
+              <div className="p-3.5 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-rose-800 dark:text-rose-200 animate-in fade-in">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold">تنبيه في بنية الكود: </span>
+                    <span className="font-mono text-[11px]">{jsonPasteError}</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRepairAndFormat}
+                  className="self-end sm:self-auto px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl shrink-0 transition"
+                >
+                  إصلاح المشكلة الآن
+                </button>
+              </div>
+            )}
+
+            <form onSubmit={handlePasteModalSubmit} className="space-y-4">
+              <div className="relative">
+                <textarea
+                  value={jsonPasteContent}
+                  onChange={(e) => {
+                    setJsonPasteContent(e.target.value);
+                    if (jsonPasteError) setJsonPasteError(null);
+                  }}
+                  placeholder='{ "fileName": "MyPastedQuestions.json", "questions": [ { "questionText": "...", "optionA": "...", "optionB": "...", "correctOption": "A", "examYears": [2021, 2024] } ] }'
+                  className="w-full h-72 md:h-80 p-3.5 border border-slate-300 dark:border-slate-700 rounded-2xl bg-slate-50 dark:bg-slate-950 font-mono text-xs leading-relaxed focus:ring-2 focus:ring-violet-500 focus:outline-none"
+                  required
+                  dir="ltr"
+                />
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5 self-start sm:self-auto">
+                  <HelpCircle className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <span>يقوم النظام بتصحيح الفواصل الناقصة أو الزائدة، وقيم examYears تلقائياً عند التأكيد.</span>
+                </div>
+
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowJsonPasteModal(false);
+                      setJsonPasteError(null);
+                    }}
+                    className="px-4 py-2.5 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-semibold text-xs hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                  >
+                    إلغاء
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmitting || !jsonPasteContent.trim()}
+                    className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs rounded-xl shadow-md shadow-violet-500/20 disabled:opacity-50 transition flex items-center gap-2"
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>جاري التحليل والاستيراد...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>تأكيد واستيراد</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
