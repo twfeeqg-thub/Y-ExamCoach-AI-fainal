@@ -37,54 +37,77 @@ export function validateLessonInput(raw: any): ValidationResult {
 
   // 1. Grade (9 or 12)
   let grade: Grade = 12;
-  const rawGrade = raw.grade ?? raw.Grade ?? raw.grade_level;
+  const rawGrade = raw.grade ?? raw.Grade ?? raw.grade_level ?? raw.gradeLevel;
   if (rawGrade !== undefined && rawGrade !== null) {
-    const parsedGrade = Number(rawGrade);
-    if (parsedGrade === 9 || parsedGrade === 12) {
-      grade = parsedGrade as Grade;
+    const gradeStr = String(rawGrade).trim();
+    if (gradeStr === '9' || gradeStr.includes('تاسع') || gradeStr.includes('اساسي') || gradeStr.includes('أساسي')) {
+      grade = 9;
     } else {
-      errors.push(`الصف الدراسي يجب أن يكون 9 (أساسي) أو 12 (ثانوي)، القيمة المدخلة: ${rawGrade}`);
+      grade = 12;
     }
   }
 
   // 2. Subject
-  const subjectRaw = raw.subject ?? raw.Subject ?? raw.targetSubject ?? raw.target_subject;
-  const subject = typeof subjectRaw === 'string' && subjectRaw.trim().length > 0
-    ? subjectRaw.trim()
-    : '';
-  if (!subject) {
-    errors.push('حقل المادة الدراسية (subject) إلزامي ولا يمكن تركه فارغاً');
-  }
+  const subjectRaw =
+    raw.subject ??
+    raw.Subject ??
+    raw.targetSubject ??
+    raw.target_subject ??
+    raw.course ??
+    raw.material;
+  const subject =
+    typeof subjectRaw === 'string' && subjectRaw.trim().length > 0
+      ? subjectRaw.trim()
+      : 'عام';
 
   // 3. Lesson Title
-  const lessonTitleRaw = raw.lessonTitle ?? raw.lesson_title ?? raw.title ?? raw.LessonTitle;
-  const lessonTitle = typeof lessonTitleRaw === 'string' && lessonTitleRaw.trim().length > 0
-    ? lessonTitleRaw.trim()
-    : '';
+  const lessonTitleRaw =
+    raw.lesson_title ??
+    raw.lessonTitle ??
+    raw.title ??
+    raw.LessonTitle ??
+    raw.name ??
+    raw.lesson;
+  const lessonTitle =
+    typeof lessonTitleRaw === 'string' && lessonTitleRaw.trim().length > 0
+      ? lessonTitleRaw.trim()
+      : '';
   if (!lessonTitle) {
-    errors.push('عنوان الدرس (lessonTitle) إلزامي');
+    errors.push('عنوان الدرس (lesson_title) إلزامي ولا يمكن تركه فارغاً');
   }
 
   // 4. Section & Unit
   const sectionRaw = raw.section ?? raw.Section;
-  const section = typeof sectionRaw === 'string' && sectionRaw.trim().length > 0
-    ? sectionRaw.trim()
-    : null;
+  const section =
+    typeof sectionRaw === 'string' && sectionRaw.trim().length > 0
+      ? sectionRaw.trim()
+      : null;
 
-  const unitTitleRaw = raw.unitTitle ?? raw.unit_title ?? raw.unit ?? raw.UnitTitle;
-  const unitTitle = typeof unitTitleRaw === 'string' && unitTitleRaw.trim().length > 0
-    ? unitTitleRaw.trim()
-    : null;
+  const unitTitleRaw =
+    raw.unit_title ??
+    raw.unitTitle ??
+    raw.unit ??
+    raw.UnitTitle ??
+    raw.unit_name;
+  const unitTitle =
+    typeof unitTitleRaw === 'string' && unitTitleRaw.trim().length > 0
+      ? unitTitleRaw.trim()
+      : null;
 
-  const unitOrderRaw = raw.unitOrder ?? raw.unit_order;
+  const unitOrderRaw = raw.unit_order ?? raw.unitOrder;
   const unitOrder = Number(unitOrderRaw) > 0 ? Math.floor(Number(unitOrderRaw)) : 1;
 
-  const lessonOrderRaw = raw.lessonOrder ?? raw.lesson_order;
+  const lessonOrderRaw = raw.lesson_order ?? raw.lessonOrder;
   const lessonOrder = Number(lessonOrderRaw) > 0 ? Math.floor(Number(lessonOrderRaw)) : 1;
 
   // 5. Learning Objective Codes
   let learningObjectiveCodes: string[] = [];
-  const rawCodes = raw.learningObjectiveCodes ?? raw.learning_objective_codes ?? raw.objectives ?? raw.codes;
+  const rawCodes =
+    raw.learning_objective_codes ??
+    raw.learningObjectiveCodes ??
+    raw.objectives ??
+    raw.codes ??
+    raw.learning_objectives;
   if (Array.isArray(rawCodes)) {
     learningObjectiveCodes = rawCodes
       .map((c) => String(c).trim())
@@ -97,15 +120,23 @@ export function validateLessonInput(raw: any): ValidationResult {
   }
 
   // 6. Estimated Reading Time
-  const timeRaw = raw.estimatedReadingTimeMinutes ?? raw.estimated_reading_time_minutes ?? raw.readingTimeMinutes ?? raw.readingTime;
+  const timeRaw =
+    raw.estimated_reading_time_minutes ??
+    raw.estimatedReadingTimeMinutes ??
+    raw.readingTimeMinutes ??
+    raw.readingTime ??
+    raw.reading_time;
   const estimatedReadingTimeMinutes = Number(timeRaw) > 0 ? Math.floor(Number(timeRaw)) : 10;
 
   // 7. Content Normalization
-  const rawContent = raw.content ?? raw.content_json ?? raw.body ?? raw;
+  let rawContent = raw.content_json ?? raw.content ?? raw.body ?? raw;
+  if (rawContent && typeof rawContent === 'object' && rawContent.content_json) {
+    rawContent = rawContent.content_json;
+  }
   const content = normalizeContent(rawContent);
 
   // 8. Media Resources Normalization
-  const rawMedia = raw.mediaResources ?? raw.media_resources ?? raw.media;
+  const rawMedia = raw.media_resources ?? raw.mediaResources ?? raw.media;
   const mediaResources = normalizeMediaResources(rawMedia);
 
   const id = typeof raw.id === 'string' && raw.id.trim().length > 0 ? raw.id.trim() : undefined;
@@ -136,6 +167,14 @@ export function validateLessonInput(raw: any): ValidationResult {
  * Normalizes content object into standard LessonContent structure
  */
 function normalizeContent(rawContent: any): LessonContent {
+  if (typeof rawContent === 'string') {
+    try {
+      rawContent = JSON.parse(rawContent);
+    } catch {
+      // Keep as string introduction if not JSON
+    }
+  }
+
   if (!rawContent || typeof rawContent !== 'object') {
     return {
       introduction: typeof rawContent === 'string' ? rawContent.trim() : '',
@@ -147,20 +186,30 @@ function normalizeContent(rawContent: any): LessonContent {
   }
 
   // Introduction
-  const introRaw = rawContent.introduction ?? rawContent.intro ?? rawContent.summary ?? '';
+  const introRaw =
+    rawContent.introduction ??
+    rawContent.intro ??
+    rawContent.summary ??
+    rawContent.overview ??
+    '';
   const introduction = typeof introRaw === 'string' ? introRaw.trim() : '';
 
   // Core Concepts
-  const rawConcepts = rawContent.coreConcepts ?? rawContent.core_concepts ?? rawContent.concepts ?? [];
+  const rawConcepts =
+    rawContent.core_concepts ??
+    rawContent.coreConcepts ??
+    rawContent.concepts ??
+    rawContent.key_concepts ??
+    [];
   const coreConcepts: CoreConcept[] = [];
   if (Array.isArray(rawConcepts)) {
     for (const c of rawConcepts) {
       if (typeof c === 'string' && c.trim().length > 0) {
         coreConcepts.push({ conceptTitle: 'مفهوم أساسي', explanation: c.trim() });
       } else if (c && typeof c === 'object') {
-        const title = c.conceptTitle ?? c.concept_title ?? c.title ?? 'مفهوم رئيسي';
-        const expl = c.explanation ?? c.description ?? c.text ?? '';
-        const key = c.keyTakeaway ?? c.key_takeaway ?? c.takeaway;
+        const title = c.concept_title ?? c.conceptTitle ?? c.title ?? c.name ?? 'مفهوم رئيسي';
+        const expl = c.explanation ?? c.description ?? c.text ?? c.content ?? '';
+        const key = c.key_takeaway ?? c.keyTakeaway ?? c.takeaway ?? c.summary;
         if (expl || title) {
           coreConcepts.push({
             conceptTitle: String(title).trim(),
@@ -173,25 +222,40 @@ function normalizeContent(rawContent: any): LessonContent {
   }
 
   // Common Mistakes
-  const rawMistakes = rawContent.commonMistakes ?? rawContent.common_mistakes ?? rawContent.mistakes ?? [];
+  const rawMistakes =
+    rawContent.common_mistakes ??
+    rawContent.commonMistakes ??
+    rawContent.mistakes ??
+    rawContent.pitfalls ??
+    [];
   let commonMistakes: string[] = [];
   if (Array.isArray(rawMistakes)) {
     commonMistakes = rawMistakes
-      .map((m) => String(m).trim())
+      .map((m) => (typeof m === 'string' ? m.trim() : m?.text || m?.mistake || ''))
       .filter((m) => m.length > 0);
   } else if (typeof rawMistakes === 'string' && rawMistakes.trim().length > 0) {
     commonMistakes = rawMistakes.split(/[\n;]+/).map((m) => m.trim()).filter((m) => m.length > 0);
   }
 
   // Solved Examples
-  const rawExamples = rawContent.solvedExamples ?? rawContent.solved_examples ?? rawContent.examples ?? [];
+  const rawExamples =
+    rawContent.solved_examples ??
+    rawContent.solvedExamples ??
+    rawContent.examples ??
+    rawContent.solved_problems ??
+    [];
   const solvedExamples: SolvedExample[] = [];
   if (Array.isArray(rawExamples)) {
     for (const ex of rawExamples) {
       if (ex && typeof ex === 'object') {
-        const text = ex.exampleText ?? ex.example_text ?? ex.question ?? ex.text ?? '';
-        const solution = ex.stepByStepSolution ?? ex.step_by_step_solution ?? ex.solution ?? '';
-        const answer = ex.finalAnswer ?? ex.final_answer ?? ex.answer ?? '';
+        const text = ex.example_text ?? ex.exampleText ?? ex.question ?? ex.text ?? ex.problem ?? '';
+        const solution =
+          ex.step_by_step_solution ??
+          ex.stepByStepSolution ??
+          ex.solution ??
+          ex.steps ??
+          '';
+        const answer = ex.final_answer ?? ex.finalAnswer ?? ex.answer ?? ex.result ?? '';
         if (text || solution) {
           solvedExamples.push({
             exampleText: String(text).trim(),
@@ -204,7 +268,14 @@ function normalizeContent(rawContent: any): LessonContent {
   }
 
   // Active Recall Summary
-  const rawRecall = rawContent.activeRecallSummary ?? rawContent.active_recall_summary ?? rawContent.activeRecall ?? rawContent.quizQuestions ?? '';
+  const rawRecall =
+    rawContent.active_recall_summary ??
+    rawContent.activeRecallSummary ??
+    rawContent.activeRecall ??
+    rawContent.active_recall ??
+    rawContent.quizQuestions ??
+    rawContent.quick_review ??
+    '';
   let activeRecallSummary = '';
   if (typeof rawRecall === 'string') {
     activeRecallSummary = rawRecall.trim();

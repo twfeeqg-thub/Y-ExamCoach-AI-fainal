@@ -171,48 +171,153 @@ export const LessonUploadForm: React.FC<LessonUploadFormProps> = ({
   const [isSavingManual, setIsSavingManual] = useState<boolean>(false);
 
   // ---------------------------------------------------------------------------
-  // JSON Mode Handlers
+  // JSON Mode Handlers & Form State Hydration
   // ---------------------------------------------------------------------------
 
-  const handleParseJson = () => {
+  const applyJsonToFormState = (lesson: LessonInput) => {
+    if (lesson.grade) setGrade(lesson.grade);
+    if (lesson.section) setSection(lesson.section);
+    if (lesson.subject) setSubject(lesson.subject);
+    if (lesson.unitTitle) setUnitTitle(lesson.unitTitle);
+    if (lesson.unitOrder) setUnitOrder(lesson.unitOrder);
+    if (lesson.lessonTitle) setLessonTitle(lesson.lessonTitle);
+    if (lesson.lessonOrder) setLessonOrder(lesson.lessonOrder);
+    if (lesson.learningObjectiveCodes && lesson.learningObjectiveCodes.length > 0) {
+      setLearningObjectiveCodes(lesson.learningObjectiveCodes.join(', '));
+    }
+    if (lesson.estimatedReadingTimeMinutes) {
+      setEstimatedReadingTime(lesson.estimatedReadingTimeMinutes);
+    }
+    if (lesson.content) {
+      if (lesson.content.introduction !== undefined) {
+        setIntroduction(lesson.content.introduction);
+      }
+      if (Array.isArray(lesson.content.coreConcepts) && lesson.content.coreConcepts.length > 0) {
+        setCoreConcepts(lesson.content.coreConcepts);
+      }
+      if (Array.isArray(lesson.content.commonMistakes) && lesson.content.commonMistakes.length > 0) {
+        setCommonMistakes(lesson.content.commonMistakes);
+      }
+      if (Array.isArray(lesson.content.solvedExamples) && lesson.content.solvedExamples.length > 0) {
+        setSolvedExamples(lesson.content.solvedExamples);
+      }
+      if (lesson.content.activeRecallSummary !== undefined) {
+        setActiveRecallSummary(lesson.content.activeRecallSummary);
+      }
+    }
+    if (lesson.mediaResources) {
+      const allMedia = [
+        ...(lesson.mediaResources.video || []),
+        ...(lesson.mediaResources.audio || []),
+        ...(lesson.mediaResources.attachments || []),
+      ];
+      if (allMedia.length > 0) {
+        setMediaResources(allMedia);
+      }
+    }
+  };
+
+  const handleJsonInputChange = (text: string) => {
+    setJsonInput(text);
+    if (!text.trim()) {
+      setJsonParsedLessons([]);
+      setJsonValidationErrors([]);
+      return;
+    }
+    try {
+      let cleaned = text.trim();
+      if (cleaned.startsWith('```')) {
+        cleaned = cleaned.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '');
+      }
+      const parsed = JSON.parse(cleaned);
+      const items = Array.isArray(parsed) ? parsed : [parsed];
+      const result = validateLessonList(items);
+      if (result.validLessons.length > 0) {
+        setJsonParsedLessons(result.validLessons);
+        setJsonValidationErrors(result.errors);
+        applyJsonToFormState(result.validLessons[0]);
+      }
+    } catch {
+      // Non-blocking during typing; explicit parse and feedback available on button click
+    }
+  };
+
+  const handleParseJson = (silent = false): LessonInput[] | null => {
     setIsParsingJson(true);
     setJsonValidationErrors([]);
-    setJsonParsedLessons([]);
 
     if (!jsonInput.trim()) {
-      setJsonValidationErrors(['يرجى لصق نص JSON أو استيراد ملف صالح']);
+      setJsonValidationErrors(['يرجى لصق نص JSON للدرس أو استيراد ملف صالح']);
       setIsParsingJson(false);
-      return;
+      if (!silent) {
+        triggerSupportToast({
+          title: 'لا يوجد محتوى للدرس 🔴',
+          message: 'يرجى لصق كود JSON للدرس أولاً.',
+          type: 'warning',
+        });
+      }
+      return null;
     }
 
     try {
-      // Clean potential markdown backticks ```json ... ```
       let cleaned = jsonInput.trim();
       if (cleaned.startsWith('```')) {
         cleaned = cleaned.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '');
       }
 
-      const parsed = JSON.parse(cleaned);
+      let parsed: any;
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch (parseErr: any) {
+        // Fallback cleanup: remove trailing commas
+        const sanitized = cleaned.replace(/,\s*([\}\]])/g, '$1');
+        parsed = JSON.parse(sanitized);
+      }
+
       const items = Array.isArray(parsed) ? parsed : [parsed];
       const result = validateLessonList(items);
 
       if (result.validLessons.length > 0) {
         setJsonParsedLessons(result.validLessons);
+        applyJsonToFormState(result.validLessons[0]);
+
         if (result.errors.length > 0) {
           setJsonValidationErrors(result.errors);
+        } else {
+          setJsonValidationErrors([]);
         }
-        triggerSupportToast({
-          title: 'تم التحقق من الدروس بنجاح',
-          message: `تم تحليل ${result.validLessons.length} درس بنجاح وجاهز للحفظ والنشر.`,
-          type: 'success',
-        });
+
+        if (!silent) {
+          triggerSupportToast({
+            title: 'تم التحقق من الدروس وتحديث النموذج 🟢',
+            message: `تمت قراءة ${result.validLessons.length} درس بنجاح (المادة: ${result.validLessons[0].subject} - ${result.validLessons[0].lessonTitle}).`,
+            type: 'success',
+          });
+        }
+        return result.validLessons;
       } else {
         setJsonValidationErrors(
-          result.errors.length > 0 ? result.errors : ['صيغة الدروس غير متطابقة']
+          result.errors.length > 0 ? result.errors : ['صيغة بيانات الدرس غير متطابقة']
         );
+        if (!silent) {
+          triggerSupportToast({
+            title: 'بيانات غير متطابقة 🔴',
+            message: result.errors[0] || 'يرجى التأكد من حقول الدرس (subject, lesson_title, content_json).',
+            type: 'error',
+          });
+        }
+        return null;
       }
     } catch (err: any) {
       setJsonValidationErrors([`خطأ في بنية JSON: ${err.message || 'صيغة غير صالحة'}`]);
+      if (!silent) {
+        triggerSupportToast({
+          title: 'خطأ في بنية JSON 🔴',
+          message: err.message || 'يرجى التأكد من صحة تنسيق JSON.',
+          type: 'error',
+        });
+      }
+      return null;
     } finally {
       setIsParsingJson(false);
     }
@@ -225,43 +330,63 @@ export const LessonUploadForm: React.FC<LessonUploadFormProps> = ({
     const reader = new FileReader();
     reader.onload = (event) => {
       const content = event.target?.result as string;
-      setJsonInput(content);
+      handleJsonInputChange(content);
+      triggerSupportToast({
+        title: 'تم استيراد الملف بنجاح 🟢',
+        message: `تم تحميل ملف "${file.name}" وتحديث النموذج آلياً.`,
+        type: 'success',
+      });
     };
     reader.readAsText(file);
   };
 
   const handleSaveJsonLessons = async () => {
-    if (jsonParsedLessons.length === 0) return;
+    let lessonsToSave = jsonParsedLessons;
+
+    // If lessons haven't been parsed yet, attempt parsing right now
+    if (lessonsToSave.length === 0) {
+      const parsed = handleParseJson(true);
+      if (!parsed || parsed.length === 0) {
+        triggerSupportToast({
+          title: 'تنبيه قبل الحفظ 🔴',
+          message: 'يرجى إدخال أو مراجعة كود JSON الخاص بالدرس (الذي يحوي subject, lesson_title, content_json).',
+          type: 'error',
+        });
+        return;
+      }
+      lessonsToSave = parsed;
+    }
+
     setIsSubmittingJson(true);
+    triggerSupportToast({
+      title: 'جاري الحفظ... ⏳',
+      message: `يتم الآن إرسال ${lessonsToSave.length} درس وحفظها في قاعدة البيانات...`,
+      type: 'processing',
+    });
 
     try {
       const res = await fetch('/api/lessons', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lessons: jsonParsedLessons }),
+        body: JSON.stringify({ lessons: lessonsToSave }),
       });
 
       const data = await res.json();
-      if (data.success && Array.isArray(data.lessons)) {
+      if (res.ok && data.success && Array.isArray(data.lessons)) {
         saveLessonsLocally(data.lessons);
         triggerSupportToast({
-          title: 'تم حفظ الدروس بنجاح',
-          message: data.message || `تم إدراج ${data.lessons.length} درس في بنك المعرفة.`,
+          title: 'تم حفظ ونشر الدرس بنجاح 🟢',
+          message: data.message || `تم بنجاح حفظ ونشر ${data.lessons.length} درس في جدول smart_exam_engine.lessons.`,
           type: 'success',
         });
         if (onSuccess) onSuccess(data.lessons);
       } else {
-        throw new Error(data.error || 'تعذر حفظ الدروس');
+        throw new Error(data.error || 'تعذر حفظ الدرس في قاعدة البيانات');
       }
     } catch (err: any) {
-      // In offline fallback: save locally directly
-      triggerSupportToast({
-        title: 'حفظ محلي (وضع عدم الاتصال)',
-        message: 'تم تخزين الدروس محلياً في ذاكرة المتصفح للعمل أوفلاين.',
-        type: 'offline',
-      });
-      // Construct fallback lessons
-      const fallbackLessons: Lesson[] = jsonParsedLessons.map((input, idx) => ({
+      console.warn('[LessonUploadForm] Server API failed, saving locally:', err);
+      // Offline fallback: save locally directly
+      const fallbackLessons: Lesson[] = lessonsToSave.map((input, idx) => ({
         id: input.id || `les-offline-${Date.now()}-${idx}`,
         grade: input.grade,
         section: input.section || null,
@@ -281,6 +406,11 @@ export const LessonUploadForm: React.FC<LessonUploadFormProps> = ({
         createdAt: new Date().toISOString(),
       }));
       saveLessonsLocally(fallbackLessons);
+      triggerSupportToast({
+        title: 'تم حفظ ونشر الدرس محلياً (Offline) 🟢',
+        message: 'تم حفظ الدرس في الذاكرة المحلية للجهاز وسيعمل دون اتصال بالإنترنت.',
+        type: 'offline',
+      });
       if (onSuccess) onSuccess(fallbackLessons);
     } finally {
       setIsSubmittingJson(false);
@@ -332,22 +462,27 @@ export const LessonUploadForm: React.FC<LessonUploadFormProps> = ({
   const handleSaveManualLesson = async () => {
     if (!lessonTitle.trim()) {
       triggerSupportToast({
-        title: 'بيانات غير مكتملة',
-        message: 'يرجى كتابة عنوان الدرس أولاً.',
-        type: 'warning',
+        title: 'بيانات غير مكتملة 🔴',
+        message: 'يرجى كتابة عنوان الدرس (lesson_title) قبل الحفظ والنشر.',
+        type: 'error',
       });
       return;
     }
     if (!subject.trim()) {
       triggerSupportToast({
-        title: 'بيانات غير مكتملة',
-        message: 'يرجى تحديد المادة الدراسية.',
-        type: 'warning',
+        title: 'بيانات غير مكتملة 🔴',
+        message: 'يرجى تحديد المادة الدراسية (subject) أولاً.',
+        type: 'error',
       });
       return;
     }
 
     setIsSavingManual(true);
+    triggerSupportToast({
+      title: 'جاري الحفظ... ⏳',
+      message: `يتم الآن حفظ ونشر درس "${lessonTitle.trim()}" في جدول smart_exam_engine.lessons...`,
+      type: 'processing',
+    });
 
     const filteredConcepts = coreConcepts.filter(
       (c) => c.conceptTitle.trim() || c.explanation.trim()
@@ -406,18 +541,19 @@ export const LessonUploadForm: React.FC<LessonUploadFormProps> = ({
       });
 
       const data = await res.json();
-      if (data.success && Array.isArray(data.lessons) && data.lessons.length > 0) {
+      if (res.ok && data.success && Array.isArray(data.lessons) && data.lessons.length > 0) {
         addOrUpdateLocalLesson(data.lessons[0]);
         triggerSupportToast({
-          title: 'تم حفظ الدرس بنجاح',
-          message: `تم نشر درس "${payload.lessonTitle}" في بنك الدروس.`,
+          title: 'تم حفظ ونشر الدرس بنجاح 🟢',
+          message: `تم نشر درس "${payload.lessonTitle}" في جدول smart_exam_engine.lessons بنجاح.`,
           type: 'success',
         });
         if (onSuccess) onSuccess(data.lessons);
       } else {
-        throw new Error(data.error || 'تعذر حفظ الدرس');
+        throw new Error(data.error || 'تعذر حفظ الدرس في قاعدة البيانات');
       }
-    } catch {
+    } catch (err: any) {
+      console.warn('[LessonUploadForm] Server API failed, saving locally:', err);
       // Offline fallback: create lesson object and save locally
       const offlineLesson: Lesson = {
         id: payload.id || `les-offline-${Date.now()}`,
@@ -440,7 +576,7 @@ export const LessonUploadForm: React.FC<LessonUploadFormProps> = ({
       };
       addOrUpdateLocalLesson(offlineLesson);
       triggerSupportToast({
-        title: 'تم الحفظ في الذاكرة المحلية',
+        title: 'تم حفظ ونشر الدرس محلياً (Offline) 🟢',
         message: 'تم حفظ الدرس محلياً بنجاح في وضع العمل بدون إنترنت.',
         type: 'offline',
       });
@@ -527,7 +663,14 @@ export const LessonUploadForm: React.FC<LessonUploadFormProps> = ({
             <div className="flex items-center gap-2 shrink-0">
               <button
                 type="button"
-                onClick={() => setJsonInput(SAMPLE_NOTEBOOK_JSON)}
+                onClick={() => {
+                  handleJsonInputChange(SAMPLE_NOTEBOOK_JSON);
+                  triggerSupportToast({
+                    title: 'تم إدراج القالب النموذجي 🟢',
+                    message: 'تم ملء الحقول وتحديث النموذج آلياً بالبيانات النموذجية.',
+                    type: 'info',
+                  });
+                }}
                 className="px-3 py-1.5 bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded-lg text-xs font-bold hover:bg-blue-50 transition flex items-center gap-1.5 cursor-pointer"
               >
                 <FileDown className="w-3.5 h-3.5" />
@@ -552,8 +695,8 @@ export const LessonUploadForm: React.FC<LessonUploadFormProps> = ({
             </label>
             <textarea
               value={jsonInput}
-              onChange={(e) => setJsonInput(e.target.value)}
-              placeholder="ألصق كائن JSON المفرغ من Gemini Notebook هنا..."
+              onChange={(e) => handleJsonInputChange(e.target.value)}
+              placeholder="ألصق كائن أو مصفوفة JSON للدرس هنا (يتم تحديث النموذج والتحقق آلياً)..."
               rows={12}
               className="w-full font-mono text-xs p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-blue-500 focus:outline-none transition ltr"
               dir="ltr"
@@ -583,6 +726,9 @@ export const LessonUploadForm: React.FC<LessonUploadFormProps> = ({
                   <CheckCircle2 className="w-4 h-4 text-emerald-500" />
                   <span>معاينة الدروس التي تم التحقق منها ({jsonParsedLessons.length}):</span>
                 </h3>
+                <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-100/60 dark:bg-emerald-950/60 px-2.5 py-1 rounded-lg">
+                  جاهز للنشر ومحدث في حقول النموذج آلياً
+                </span>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-60 overflow-y-auto p-1">
                 {jsonParsedLessons.map((l, idx) => (
@@ -611,26 +757,54 @@ export const LessonUploadForm: React.FC<LessonUploadFormProps> = ({
           )}
 
           {/* Action Buttons */}
-          <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-200 dark:border-slate-800">
-            <button
-              type="button"
-              onClick={handleParseJson}
-              disabled={isParsingJson || !jsonInput.trim()}
-              className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-            >
-              <RefreshCw className={`w-4 h-4 ${isParsingJson ? 'animate-spin' : ''}`} />
-              <span>فحص ومعاينة البيانات</span>
-            </button>
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-200 dark:border-slate-800">
+            <div className="flex items-center gap-2">
+              {jsonParsedLessons.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setActiveMode('manual')}
+                  className="px-3.5 py-2 rounded-xl bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 text-xs font-bold hover:bg-purple-100 transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  <span>تعديل في المحرر اليدوي</span>
+                </button>
+              )}
+            </div>
 
-            <button
-              type="button"
-              onClick={handleSaveJsonLessons}
-              disabled={isSubmittingJson || jsonParsedLessons.length === 0}
-              className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow-md shadow-blue-500/20 disabled:opacity-50"
-            >
-              <CheckCircle2 className="w-4 h-4" />
-              <span>{isSubmittingJson ? 'جارٍ الحفظ...' : `حفظ ونشر (${jsonParsedLessons.length}) درس`}</span>
-            </button>
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => handleParseJson(false)}
+                disabled={isParsingJson || !jsonInput.trim()}
+                className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${isParsingJson ? 'animate-spin' : ''}`} />
+                <span>فحص ومعاينة البيانات</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSaveJsonLessons}
+                disabled={isSubmittingJson}
+                className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow-md shadow-blue-500/20 disabled:opacity-50"
+              >
+                {isSubmittingJson ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>جاري الحفظ والنشر...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>
+                      {jsonParsedLessons.length > 0
+                        ? `حفظ ونشر (${jsonParsedLessons.length}) درس`
+                        : 'حفظ ونشر الدرس'}
+                    </span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1143,11 +1317,20 @@ export const LessonUploadForm: React.FC<LessonUploadFormProps> = ({
             <button
               type="button"
               onClick={handleSaveManualLesson}
-              disabled={isSavingManual || !lessonTitle.trim()}
+              disabled={isSavingManual}
               className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow-md shadow-blue-500/20 disabled:opacity-50"
             >
-              <CheckCircle2 className="w-4 h-4" />
-              <span>{isSavingManual ? 'جارٍ الحفظ والتحديث...' : 'حفظ ونشر الدرس'}</span>
+              {isSavingManual ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>جاري الحفظ والنشر...</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>حفظ ونشر الدرس</span>
+                </>
+              )}
             </button>
           </div>
         </div>
