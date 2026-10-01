@@ -381,37 +381,16 @@ export const LessonUploadForm: React.FC<LessonUploadFormProps> = ({
         });
         if (onSuccess) onSuccess(data.lessons);
       } else {
-        throw new Error(data.error || 'تعذر حفظ الدرس في قاعدة البيانات');
+        const errorMsg = data.error || (data.details ? JSON.stringify(data.details) : 'تعذر حفظ الدرس في قاعدة البيانات');
+        throw new Error(errorMsg);
       }
     } catch (err: any) {
-      console.warn('[LessonUploadForm] Server API failed, saving locally:', err);
-      // Offline fallback: save locally directly
-      const fallbackLessons: Lesson[] = lessonsToSave.map((input, idx) => ({
-        id: input.id || `les-offline-${Date.now()}-${idx}`,
-        grade: input.grade,
-        section: input.section || null,
-        subject: input.subject,
-        unitTitle: input.unitTitle || null,
-        unitOrder: input.unitOrder || 1,
-        lessonTitle: input.lessonTitle,
-        lessonOrder: input.lessonOrder || 1,
-        learningObjectiveCodes: input.learningObjectiveCodes || [],
-        estimatedReadingTimeMinutes: input.estimatedReadingTimeMinutes || 10,
-        content: input.content,
-        mediaResources: {
-          audio: input.mediaResources?.audio || [],
-          video: input.mediaResources?.video || [],
-          attachments: input.mediaResources?.attachments || [],
-        },
-        createdAt: new Date().toISOString(),
-      }));
-      saveLessonsLocally(fallbackLessons);
+      console.error('[LessonUploadForm] Server API save failed:', err);
       triggerSupportToast({
-        title: 'تم حفظ ونشر الدرس محلياً (Offline) 🟢',
-        message: 'تم حفظ الدرس في الذاكرة المحلية للجهاز وسيعمل دون اتصال بالإنترنت.',
-        type: 'offline',
+        title: 'فشل حفظ ونشر الدرس في السحابة 🔴',
+        message: err.message || 'حدث خطأ أثناء الاتصال بالخادم أو قاعدة بيانات smart_exam_engine.lessons.',
+        type: 'error',
       });
-      if (onSuccess) onSuccess(fallbackLessons);
     } finally {
       setIsSubmittingJson(false);
     }
@@ -550,37 +529,16 @@ export const LessonUploadForm: React.FC<LessonUploadFormProps> = ({
         });
         if (onSuccess) onSuccess(data.lessons);
       } else {
-        throw new Error(data.error || 'تعذر حفظ الدرس في قاعدة البيانات');
+        const errorMsg = data.error || (data.details ? JSON.stringify(data.details) : 'تعذر حفظ الدرس في قاعدة البيانات');
+        throw new Error(errorMsg);
       }
     } catch (err: any) {
-      console.warn('[LessonUploadForm] Server API failed, saving locally:', err);
-      // Offline fallback: create lesson object and save locally
-      const offlineLesson: Lesson = {
-        id: payload.id || `les-offline-${Date.now()}`,
-        grade: payload.grade,
-        section: payload.section || null,
-        subject: payload.subject,
-        unitTitle: payload.unitTitle || null,
-        unitOrder: payload.unitOrder || 1,
-        lessonTitle: payload.lessonTitle,
-        lessonOrder: payload.lessonOrder || 1,
-        learningObjectiveCodes: payload.learningObjectiveCodes || [],
-        estimatedReadingTimeMinutes: payload.estimatedReadingTimeMinutes || 10,
-        content: payload.content,
-        mediaResources: {
-          audio: audios,
-          video: videos,
-          attachments,
-        },
-        createdAt: new Date().toISOString(),
-      };
-      addOrUpdateLocalLesson(offlineLesson);
+      console.error('[LessonUploadForm] Server API manual save failed:', err);
       triggerSupportToast({
-        title: 'تم حفظ ونشر الدرس محلياً (Offline) 🟢',
-        message: 'تم حفظ الدرس محلياً بنجاح في وضع العمل بدون إنترنت.',
-        type: 'offline',
+        title: 'فشل حفظ ونشر الدرس في السحابة 🔴',
+        message: err.message || 'حدث خطأ أثناء حفظ الدرس في جدول smart_exam_engine.lessons.',
+        type: 'error',
       });
-      if (onSuccess) onSuccess([offlineLesson]);
     } finally {
       setIsSavingManual(false);
     }
@@ -1338,3 +1296,6 @@ export const LessonUploadForm: React.FC<LessonUploadFormProps> = ({
     </div>
   );
 };
+
+export { LessonJsonImportTab } from './LessonJsonImportTab';
+export default LessonUploadForm;

@@ -97,7 +97,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         success: false,
-        error: error.message || 'حدث خطأ أثناء معالجة وحفظ الدروس',
+        error: error.message || 'حدث خطأ أثناء معالجة وحفظ الدروس في جدول smart_exam_engine.lessons',
+        details: error.detail || error.message || String(error),
       },
       { status: 500 }
     );

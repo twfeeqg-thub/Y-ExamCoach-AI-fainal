@@ -221,21 +221,15 @@ const memQuestions: Question[] = [
 ];
 
 /**
- * Safe SQL Query runner with fallback to in-memory mode if DB is disconnected.
+ * Safe SQL Query runner with direct PostgreSQL execution.
  */
 export async function query(text: string, params?: any[]): Promise<QueryResult> {
-  if (isInMemoryFallback) {
-    throw new Error('DATABASE_IN_MEMORY_FALLBACK');
-  }
-
   try {
     const res = await pool.query(text, params);
+    isInMemoryFallback = false;
     return res;
   } catch (error: any) {
-    if (!isInMemoryFallback) {
-      console.warn(`[Database] PostgreSQL unavailable (${error.message || 'connection failed'}). Switching to in-memory fallback database.`);
-      isInMemoryFallback = true;
-    }
+    console.error(`[Database] PostgreSQL query error: ${error.message}`);
     throw error;
   }
 }
@@ -243,7 +237,7 @@ export async function query(text: string, params?: any[]): Promise<QueryResult> 
 let isSchemaInitialized = false;
 
 export async function ensureSchema(): Promise<void> {
-  if (isSchemaInitialized || isInMemoryFallback) return;
+  if (isSchemaInitialized) return;
 
   const schemaSql = `
     CREATE SCHEMA IF NOT EXISTS smart_exam_engine;
@@ -358,7 +352,7 @@ export async function ensureSchema(): Promise<void> {
     );
 
     CREATE TABLE IF NOT EXISTS smart_exam_engine.lessons (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      id TEXT PRIMARY KEY,
       grade INT NOT NULL CHECK (grade IN (9, 12)),
       section TEXT,
       subject TEXT NOT NULL,
@@ -372,13 +366,27 @@ export async function ensureSchema(): Promise<void> {
       media_resources JSONB DEFAULT '{"audio":[],"video":[],"attachments":[]}'::jsonb,
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );
+
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'smart_exam_engine' 
+          AND table_name = 'lessons' 
+          AND column_name = 'id' 
+          AND data_type = 'uuid'
+      ) THEN
+        ALTER TABLE smart_exam_engine.lessons ALTER COLUMN id TYPE TEXT;
+      END IF;
+    END $$;
   `;
 
   try {
     await query(schemaSql);
     isSchemaInitialized = true;
-  } catch {
-    isInMemoryFallback = true;
+  } catch (err: any) {
+    console.error(`[ensureSchema] Failed to initialize schema: ${err.message}`);
+    throw err;
   }
 }
 
@@ -1283,10 +1291,15 @@ export async function insertLessons(
     return { inserted: 0, lessons: [] };
   }
 
+  // Ensure database schema and table structure exist
+  await ensureSchema();
+
   const newLessons: Lesson[] = [];
 
   for (const item of lessonsInput) {
-    const id = item.id || `les-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const id = (item.id && typeof item.id === 'string' && item.id.trim())
+      ? item.id.trim()
+      : (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `les-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`);
     const grade = (item.grade === 9 ? 9 : 12) as Grade;
     const section = item.section || null;
     const subject = item.subject || 'عام';
@@ -1330,69 +1343,55 @@ export async function insertLessons(
       createdAt,
     };
 
-    if (isInMemoryFallback) {
-      // In-memory mode: update existing if id matches or prepend
-      const existingIdx = memLessons.findIndex((l) => l.id === lesson.id);
-      if (existingIdx >= 0) {
-        memLessons[existingIdx] = lesson;
-      } else {
-        memLessons.unshift(lesson);
-      }
-      newLessons.push(lesson);
-      continue;
-    }
+    // Explicit SQL INSERT with upsert into smart_exam_engine.lessons
+    const sql = `
+      INSERT INTO smart_exam_engine.lessons (
+        id, grade, section, subject, unit_title, unit_order, lesson_title, lesson_order,
+        learning_objective_codes, estimated_reading_time_minutes, content_json, media_resources, created_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      ON CONFLICT (id) DO UPDATE SET
+        grade = EXCLUDED.grade,
+        section = EXCLUDED.section,
+        subject = EXCLUDED.subject,
+        unit_title = EXCLUDED.unit_title,
+        unit_order = EXCLUDED.unit_order,
+        lesson_title = EXCLUDED.lesson_title,
+        lesson_order = EXCLUDED.lesson_order,
+        learning_objective_codes = EXCLUDED.learning_objective_codes,
+        estimated_reading_time_minutes = EXCLUDED.estimated_reading_time_minutes,
+        content_json = EXCLUDED.content_json,
+        media_resources = EXCLUDED.media_resources
+      RETURNING *;
+    `;
 
-    try {
-      await ensureSchema();
-      const sql = `
-        INSERT INTO smart_exam_engine.lessons (
-          id, grade, section, subject, unit_title, unit_order, lesson_title, lesson_order,
-          learning_objective_codes, estimated_reading_time_minutes, content_json, media_resources, created_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-        ON CONFLICT (id) DO UPDATE SET
-          grade = EXCLUDED.grade,
-          section = EXCLUDED.section,
-          subject = EXCLUDED.subject,
-          unit_title = EXCLUDED.unit_title,
-          unit_order = EXCLUDED.unit_order,
-          lesson_title = EXCLUDED.lesson_title,
-          lesson_order = EXCLUDED.lesson_order,
-          learning_objective_codes = EXCLUDED.learning_objective_codes,
-          estimated_reading_time_minutes = EXCLUDED.estimated_reading_time_minutes,
-          content_json = EXCLUDED.content_json,
-          media_resources = EXCLUDED.media_resources
-        RETURNING *;
-      `;
-      const res = await query(sql, [
-        lesson.id,
-        lesson.grade,
-        lesson.section,
-        lesson.subject,
-        lesson.unitTitle,
-        lesson.unitOrder,
-        lesson.lessonTitle,
-        lesson.lessonOrder,
-        lesson.learningObjectiveCodes,
-        lesson.estimatedReadingTimeMinutes,
-        JSON.stringify(lesson.content),
-        JSON.stringify(lesson.mediaResources),
-        lesson.createdAt,
-      ]);
+    const res = await query(sql, [
+      lesson.id,
+      lesson.grade,
+      lesson.section,
+      lesson.subject,
+      lesson.unitTitle,
+      lesson.unitOrder,
+      lesson.lessonTitle,
+      lesson.lessonOrder,
+      lesson.learningObjectiveCodes,
+      lesson.estimatedReadingTimeMinutes,
+      JSON.stringify(lesson.content),
+      JSON.stringify(lesson.mediaResources),
+      lesson.createdAt,
+    ]);
 
-      if (res.rows && res.rows.length > 0) {
-        newLessons.push(mapLessonRowToLesson(res.rows[0] as LessonRow));
-      } else {
-        newLessons.push(lesson);
-      }
-    } catch {
-      isInMemoryFallback = true;
-      const existingIdx = memLessons.findIndex((l) => l.id === lesson.id);
+    if (res.rows && res.rows.length > 0) {
+      const mapped = mapLessonRowToLesson(res.rows[0] as LessonRow);
+      newLessons.push(mapped);
+      // Keep memory mirror in sync
+      const existingIdx = memLessons.findIndex((l) => l.id === mapped.id);
       if (existingIdx >= 0) {
-        memLessons[existingIdx] = lesson;
+        memLessons[existingIdx] = mapped;
       } else {
-        memLessons.unshift(lesson);
+        memLessons.unshift(mapped);
       }
+    } else {
       newLessons.push(lesson);
     }
   }
@@ -1410,7 +1409,38 @@ export async function getLessons(filters?: {
   const limit = Math.max(1, Math.min(filters?.limit || 100, 200));
   const offset = Math.max(0, filters?.offset || 0);
 
-  if (isInMemoryFallback) {
+  try {
+    await ensureSchema();
+    let whereClauses: string[] = [];
+    let params: any[] = [];
+    let paramIdx = 1;
+
+    if (filters?.subject && filters.subject !== 'all') {
+      whereClauses.push(`subject = $${paramIdx++}`);
+      params.push(filters.subject);
+    }
+    if (filters?.grade) {
+      whereClauses.push(`grade = $${paramIdx++}`);
+      params.push(filters.grade);
+    }
+    if (filters?.section && filters.section !== 'all') {
+      whereClauses.push(`section = $${paramIdx++}`);
+      params.push(filters.section);
+    }
+
+    const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+    const sql = `
+      SELECT * FROM smart_exam_engine.lessons
+      ${whereStr}
+      ORDER BY unit_order ASC, lesson_order ASC, created_at DESC
+      LIMIT $${paramIdx++} OFFSET $${paramIdx++};
+    `;
+    params.push(limit, offset);
+
+    const res = await query(sql, params);
+    return res.rows.map((row) => mapLessonRowToLesson(row as LessonRow));
+  } catch (err: any) {
+    console.warn('[getLessons] Falling back to in-memory lessons:', err.message);
     let result = [...memLessons];
     if (filters?.subject && filters.subject !== 'all') {
       result = result.filter((l) => l.subject === filters.subject);
@@ -1418,88 +1448,37 @@ export async function getLessons(filters?: {
     if (filters?.grade) {
       result = result.filter((l) => l.grade === filters.grade);
     }
-    if (filters?.section && filters.section !== 'all') {
-      result = result.filter((l) => !l.section || l.section === filters.section);
-    }
     return result.slice(offset, offset + limit);
-  }
-
-  try {
-    await ensureSchema();
-    const conditions: string[] = [];
-    const params: any[] = [];
-    let idx = 1;
-
-    if (filters?.subject && filters.subject !== 'all') {
-      conditions.push(`subject = $${idx++}`);
-      params.push(filters.subject);
-    }
-    if (filters?.grade) {
-      conditions.push(`grade = $${idx++}`);
-      params.push(filters.grade);
-    }
-    if (filters?.section && filters.section !== 'all') {
-      conditions.push(`(section IS NULL OR section = $${idx++})`);
-      params.push(filters.section);
-    }
-
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-    const sql = `
-      SELECT * FROM smart_exam_engine.lessons
-      ${whereClause}
-      ORDER BY unit_order ASC, lesson_order ASC, created_at DESC
-      LIMIT $${idx++} OFFSET $${idx++};
-    `;
-    params.push(limit, offset);
-
-    const res = await query(sql, params);
-    return res.rows.map((row) => mapLessonRowToLesson(row as LessonRow));
-  } catch {
-    isInMemoryFallback = true;
-    return getLessons(filters);
   }
 }
 
 export async function getLessonById(id: string): Promise<Lesson | null> {
-  if (isInMemoryFallback) {
-    return memLessons.find((l) => l.id === id) || null;
-  }
-
   try {
     await ensureSchema();
     const res = await query(`SELECT * FROM smart_exam_engine.lessons WHERE id = $1 LIMIT 1;`, [id]);
     if (res.rows && res.rows.length > 0) {
       return mapLessonRowToLesson(res.rows[0] as LessonRow);
     }
-    return null;
-  } catch {
-    isInMemoryFallback = true;
-    return memLessons.find((l) => l.id === id) || null;
+  } catch (err: any) {
+    console.warn(`[getLessonById] Query failed for id ${id}:`, err.message);
   }
+  return memLessons.find((l) => l.id === id) || null;
 }
 
 export async function deleteLesson(id: string): Promise<boolean> {
-  if (isInMemoryFallback) {
-    const idx = memLessons.findIndex((l) => l.id === id);
-    if (idx >= 0) {
-      memLessons.splice(idx, 1);
-      return true;
-    }
-    return false;
+  const memIdx = memLessons.findIndex((l) => l.id === id);
+  if (memIdx >= 0) {
+    memLessons.splice(memIdx, 1);
   }
 
   try {
     await ensureSchema();
-    const res = await query(`DELETE FROM smart_exam_engine.lessons WHERE id = $1;`, [id]);
+    const sql = `DELETE FROM smart_exam_engine.lessons WHERE id = $1;`;
+    const res = await query(sql, [id]);
     return (res.rowCount ?? 0) > 0;
-  } catch {
-    isInMemoryFallback = true;
-    const idx = memLessons.findIndex((l) => l.id === id);
-    if (idx >= 0) {
-      memLessons.splice(idx, 1);
-      return true;
-    }
-    return false;
+  } catch (err: any) {
+    console.error(`[deleteLesson] SQL delete failed for id ${id}:`, err.message);
+    throw err;
   }
 }
 
