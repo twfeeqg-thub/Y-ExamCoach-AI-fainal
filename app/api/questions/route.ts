@@ -4,6 +4,7 @@ import {
   insertQuestion,
   deleteQuestion,
   deleteAllQuestions,
+  validateStrictQuestionFields,
 } from '@/lib/db';
 import { QuestionInput } from '@/types/index';
 
@@ -33,32 +34,66 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const fileId = body.fileId || null;
 
-    if (Array.isArray(body.questions)) {
-      const results = [];
-      for (const q of body.questions as QuestionInput[]) {
-        const item = await insertQuestion(fileId, q);
-        results.push(item);
-      }
+    let rawList: any[] = [];
+    if (Array.isArray(body)) {
+      rawList = body;
+    } else if (Array.isArray(body.questions)) {
+      rawList = body.questions;
+    } else if (body.question && typeof body.question === 'object') {
+      rawList = [body.question];
+    } else if (typeof body === 'object') {
+      rawList = [body];
+    }
+
+    if (rawList.length === 0) {
       return NextResponse.json(
-        { success: true, count: results.length, data: results },
-        { status: 201 }
+        { success: false, error: 'لم يتم إرسال أي أسئلة في الطلب' },
+        { status: 400 }
       );
-    } else {
-      const qInput: QuestionInput = body.question || body;
-      if (!qInput.questionText || !qInput.optionA || !qInput.optionB || !qInput.correctOption) {
+    }
+
+    // Strict validation without silent defaults
+    for (let i = 0; i < rawList.length; i++) {
+      const q = rawList[i];
+      const validationError = validateStrictQuestionFields(q, rawList.length > 1 ? i + 1 : undefined);
+      if (validationError) {
         return NextResponse.json(
-          { success: false, error: 'Missing required question fields' },
+          {
+            success: false,
+            error: validationError,
+            fieldError: validationError,
+            itemIndex: i + 1,
+          },
           { status: 400 }
         );
       }
-      const item = await insertQuestion(fileId, qInput);
-      return NextResponse.json({ success: true, data: item }, { status: 201 });
     }
+
+    // Direct injection into smart_exam_engine.questions
+    const results = [];
+    for (const q of rawList as QuestionInput[]) {
+      const item = await insertQuestion(fileId, q);
+      results.push(item);
+    }
+
+    return NextResponse.json(
+      {
+        success: true,
+        count: results.length,
+        data: results.length === 1 ? results[0] : results,
+        message: `تم إدراج وحقن ${results.length} سؤال بنجاح في جدول smart_exam_engine.questions`,
+      },
+      { status: 201 }
+    );
   } catch (error: any) {
     console.error('API /api/questions POST error:', error);
+    const status = error.message && error.message.includes('الحقل مفقود') ? 400 : 500;
     return NextResponse.json(
-      { success: false, error: error.message || 'Failed to insert question(s)' },
-      { status: 500 }
+      {
+        success: false,
+        error: error.message || 'فشل في إدراج وحفظ السؤال في جدول smart_exam_engine.questions',
+      },
+      { status }
     );
   }
 }

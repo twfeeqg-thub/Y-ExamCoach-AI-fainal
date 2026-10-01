@@ -53,6 +53,8 @@ export interface Question {
   unit: string;
   lesson: string;
   learningObjectiveCode: string | null; // مخرجات التعلم
+  bloomTaxonomy?: string | null; // تصنيف بلوم المعرفي
+  bloom_taxonomy?: string | null;
   estimatedDifficulty: Difficulty;
   pValue: number | null; // نسبة الصعوبة الفعلية
   discriminationIndex: number | null; // مؤشر التمييز
@@ -103,6 +105,7 @@ export interface QuestionRow {
   unit: string;
   lesson: string;
   learning_objective_code: string | null;
+  bloom_taxonomy?: string | null;
   estimated_difficulty: Difficulty;
   p_value: number | null;
   discrimination_index: number | null;
@@ -222,39 +225,66 @@ export interface FileInput {
 }
 
 export interface QuestionInput {
-  questionText: string;
+  questionText?: string;
+  question_text?: string;
   questionType?: QuestionType;
-  optionA: string;
-  optionB: string;
+  question_type?: QuestionType;
+  optionA?: string;
+  option_a?: string;
+  optionB?: string;
+  option_b?: string;
   optionC?: string | null;
+  option_c?: string | null;
   optionD?: string | null;
-  correctOption: CorrectOption;
-  grade: Grade;
-  section: Section;
-  subject: string;
-  unit: string;
-  lesson: string;
+  option_d?: string | null;
+  correctOption?: CorrectOption;
+  correct_option?: CorrectOption;
+  grade?: Grade;
+  section?: Section;
+  subject?: string;
+  unit?: string;
+  lesson?: string;
   learningObjectiveCode?: string | null;
+  learning_objective_code?: string | null;
+  bloomTaxonomy?: string | null;
+  bloom_taxonomy?: string | null;
   estimatedDifficulty?: Difficulty;
+  estimated_difficulty?: Difficulty;
   pValue?: number | null;
+  p_value?: number | null;
   discriminationIndex?: number | null;
+  discrimination_index?: number | null;
   distractorEfficiency?: Record<string, string> | null;
+  distractor_efficiency?: Record<string, string> | null;
   expectedTime?: number;
+  expected_time?: number;
   averageSolveTime?: number | null;
+  average_solve_time?: number | null;
   enemyQuestions?: string[];
+  enemy_questions?: string[];
   relativeQuestions?: string[];
+  relative_questions?: string[];
   assessmentContext?: AssessmentContext;
+  assessment_context?: AssessmentContext;
   hint?: string | null;
-  correctExplanation: string;
+  correctExplanation?: string;
+  correct_explanation?: string;
   wrongExplanations?: Record<string, string> | null;
+  wrong_explanations?: Record<string, string> | null;
   source?: string;
   examYear?: number;
+  exam_year?: number;
   governorate?: string;
   reviewStatus?: ReviewStatus;
+  review_status?: ReviewStatus;
   contentVersion?: number;
+  content_version?: number;
   fileName?: string | null;
+  file_name?: string | null;
   repetitionCount?: number;
+  repetition_count?: number;
   examYears?: number[];
+  exam_years?: number[];
 }
 
 export interface SystemStats {
@@ -363,6 +393,8 @@ export function mapQuestionRowToQuestion(row: QuestionRow | any): Question {
     unit: row.unit,
     lesson: row.lesson,
     learningObjectiveCode: row.learning_objective_code ?? row.learningObjectiveCode,
+    bloomTaxonomy: row.bloom_taxonomy ?? row.bloomTaxonomy ?? null,
+    bloom_taxonomy: row.bloom_taxonomy ?? row.bloomTaxonomy ?? null,
     estimatedDifficulty: row.estimated_difficulty ?? row.estimatedDifficulty ?? 'medium',
     pValue: row.p_value ?? row.pValue ?? null,
     discriminationIndex: row.discrimination_index ?? row.discriminationIndex ?? null,

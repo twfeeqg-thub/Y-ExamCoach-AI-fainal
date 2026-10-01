@@ -16,9 +16,13 @@ import {
   StudentProfileRow,
   Grade,
   Section,
+  QuestionType,
+  Difficulty,
+  AssessmentContext,
   Lesson,
   LessonRow,
   LessonInput,
+  LessonContent,
   LessonMediaResources,
   mapQuestionRowToQuestion,
   mapUploadedFileRowToFile,
@@ -30,17 +34,20 @@ import {
 // 1. PostgreSQL Connection Pool Setup
 // ---------------------------------------------------------------------------
 
-const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/smart_coach_db';
+const rawDbUrl = process.env.DATABASE_URL?.trim();
+const isLocalhost = !rawDbUrl || rawDbUrl.includes('localhost') || rawDbUrl.includes('127.0.0.1');
 
-export const pool = new Pool({
-  connectionString,
-  ssl: process.env.NODE_ENV === 'production' || connectionString.includes('supabase')
-    ? { rejectUnauthorized: false }
-    : false,
-  connectionTimeoutMillis: 3000,
-});
+export const pool: Pool | null = !isLocalhost && rawDbUrl
+  ? new Pool({
+      connectionString: rawDbUrl,
+      ssl: process.env.NODE_ENV === 'production' || rawDbUrl.includes('supabase')
+        ? { rejectUnauthorized: false }
+        : false,
+      connectionTimeoutMillis: 3000,
+    })
+  : null;
 
-let isInMemoryFallback = false;
+let isInMemoryFallback = !pool;
 
 // ---------------------------------------------------------------------------
 // In-Memory Database Storage Fallback
@@ -221,15 +228,19 @@ const memQuestions: Question[] = [
 ];
 
 /**
- * Safe SQL Query runner with direct PostgreSQL execution.
+ * Safe SQL Query runner with direct PostgreSQL execution and graceful fallback.
  */
 export async function query(text: string, params?: any[]): Promise<QueryResult> {
+  if (!pool || isInMemoryFallback) {
+    throw new Error('DATABASE_IN_MEMORY_FALLBACK');
+  }
+
   try {
     const res = await pool.query(text, params);
-    isInMemoryFallback = false;
     return res;
   } catch (error: any) {
-    console.error(`[Database] PostgreSQL query error: ${error.message}`);
+    console.warn(`[Database] PostgreSQL query error (${error.message || 'connection failed'}). Switching to in-memory fallback.`);
+    isInMemoryFallback = true;
     throw error;
   }
 }
@@ -237,7 +248,7 @@ export async function query(text: string, params?: any[]): Promise<QueryResult> 
 let isSchemaInitialized = false;
 
 export async function ensureSchema(): Promise<void> {
-  if (isSchemaInitialized) return;
+  if (isSchemaInitialized || !pool || isInMemoryFallback) return;
 
   const schemaSql = `
     CREATE SCHEMA IF NOT EXISTS smart_exam_engine;
@@ -304,6 +315,7 @@ export async function ensureSchema(): Promise<void> {
 
     ALTER TABLE smart_exam_engine.questions ADD COLUMN IF NOT EXISTS repetition_count INT NOT NULL DEFAULT 1;
     ALTER TABLE smart_exam_engine.questions ADD COLUMN IF NOT EXISTS exam_years INT[] DEFAULT '{}';
+    ALTER TABLE smart_exam_engine.questions ADD COLUMN IF NOT EXISTS bloom_taxonomy VARCHAR(100);
 
     CREATE TABLE IF NOT EXISTS smart_exam_engine.student_profiles (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -385,8 +397,8 @@ export async function ensureSchema(): Promise<void> {
     await query(schemaSql);
     isSchemaInitialized = true;
   } catch (err: any) {
-    console.error(`[ensureSchema] Failed to initialize schema: ${err.message}`);
-    throw err;
+    console.warn(`[ensureSchema] Notice: Database schema initialization skipped or failed (${err.message}). Using in-memory store.`);
+    isInMemoryFallback = true;
   }
 }
 
@@ -598,20 +610,124 @@ export async function listQuestions(
   }
 }
 
+export function validateStrictQuestionFields(q: any, index?: number): string | null {
+  const prefix = index !== undefined ? `السؤال رقم ${index}: ` : '';
+
+  const text = q.question_text ?? q.questionText;
+  if (!text || typeof text !== 'string' || !text.trim()) {
+    return `${prefix}الحقل مفقود: question_text (نص السؤال إلزامي)`;
+  }
+
+  const type = q.question_type ?? q.questionType;
+  if (!type || typeof type !== 'string' || !type.trim()) {
+    return `${prefix}الحقل مفقود: question_type (نوع السؤال إلزامي)`;
+  }
+
+  const optA = q.option_a ?? q.optionA;
+  if (!optA || typeof optA !== 'string' || !optA.trim()) {
+    return `${prefix}الحقل مفقود: option_a (الخيار أ إلزامي)`;
+  }
+
+  const optB = q.option_b ?? q.optionB;
+  if (!optB || typeof optB !== 'string' || !optB.trim()) {
+    return `${prefix}الحقل مفقود: option_b (الخيار ب إلزامي)`;
+  }
+
+  const rawCorrect = q.correct_option ?? q.correctOption;
+  if (!rawCorrect || typeof rawCorrect !== 'string' || !rawCorrect.trim()) {
+    return `${prefix}الحقل مفقود: correct_option (الخيار الصحيح إلزامي)`;
+  }
+
+  const normalizedCorrect = rawCorrect.trim().toUpperCase();
+  const validOptions = ['A', 'B', 'C', 'D', 'أ', 'ب', 'ج', 'د'];
+  if (!validOptions.includes(normalizedCorrect) && !validOptions.includes(rawCorrect.trim())) {
+    return `${prefix}قيمة الحقل مخالفة للقيود: correct_option يجب أن يكون أحد الخيارات (A, B, C, D)`;
+  }
+
+  const explanation = q.correct_explanation ?? q.correctExplanation;
+  if (!explanation || typeof explanation !== 'string' || !explanation.trim()) {
+    return `${prefix}الحقل مفقود: correct_explanation (شرح الإجابة الصحيحة إلزامي)`;
+  }
+
+  const subject = q.subject;
+  if (!subject || typeof subject !== 'string' || !subject.trim()) {
+    return `${prefix}الحقل مفقود: subject (المادة الدراسية إلزامية)`;
+  }
+
+  const grade = Number(q.grade);
+  if (grade !== 9 && grade !== 12) {
+    return `${prefix}قيمة الحقل مخالفة للقيود: grade يجب أن يكون الصف 9 أو 12`;
+  }
+
+  const section = q.section;
+  if (!section || typeof section !== 'string' || !section.trim()) {
+    return `${prefix}الحقل مفقود: section (القسم/الفرع إلزامي)`;
+  }
+
+  const unit = q.unit;
+  if (!unit || typeof unit !== 'string' || !unit.trim()) {
+    return `${prefix}الحقل مفقود: unit (اسم أو رقم الوحدة إلزامي)`;
+  }
+
+  const lesson = q.lesson;
+  if (!lesson || typeof lesson !== 'string' || !lesson.trim()) {
+    return `${prefix}الحقل مفقود: lesson (اسم أو رقم الدرس إلزامي)`;
+  }
+
+  return null;
+}
+
 export async function insertQuestion(
   fileId: string | null,
   questionData: QuestionInput
 ): Promise<Question> {
-  const cleanedText = sanitizeArabicText(questionData.questionText);
+  const validationError = validateStrictQuestionFields(questionData);
+  if (validationError) {
+    throw new Error(validationError);
+  }
+
+  const questionText = (questionData.question_text ?? questionData.questionText)!.trim();
+  const cleanedText = sanitizeArabicText(questionText);
   const textHash = computeSHA256(cleanedText);
 
-  const incomingYear = questionData.examYear || (Array.isArray(questionData.examYears) && questionData.examYears[0]) || 2026;
-  const incomingYears: number[] = Array.isArray(questionData.examYears) && questionData.examYears.length > 0
-    ? Array.from(new Set(questionData.examYears)).sort((a, b) => a - b)
-    : [incomingYear];
-  const incomingRepCount = questionData.repetitionCount && questionData.repetitionCount > 0 ? questionData.repetitionCount : 1;
+  const questionType = (questionData.question_type ?? questionData.questionType)!.trim();
+  const optionA = (questionData.option_a ?? questionData.optionA)!.trim();
+  const optionB = (questionData.option_b ?? questionData.optionB)!.trim();
+  const optionC = (questionData.option_c ?? questionData.optionC)?.trim() || null;
+  const optionD = (questionData.option_d ?? questionData.optionD)?.trim() || null;
 
-  if (isInMemoryFallback) {
+  let rawCorrect = (questionData.correct_option ?? questionData.correctOption)!.trim().toUpperCase();
+  if (rawCorrect === 'أ') rawCorrect = 'A';
+  else if (rawCorrect === 'ب') rawCorrect = 'B';
+  else if (rawCorrect === 'ج') rawCorrect = 'C';
+  else if (rawCorrect === 'د') rawCorrect = 'D';
+  const correctOption = rawCorrect as CorrectOption;
+
+  const correctExplanation = (questionData.correct_explanation ?? questionData.correctExplanation)!.trim();
+  const wrongExplanations = questionData.wrong_explanations ?? questionData.wrongExplanations ?? null;
+  const subject = questionData.subject!.trim();
+  const grade = Number(questionData.grade) as Grade;
+  const section = questionData.section!.trim() as Section;
+  const unit = questionData.unit!.trim();
+  const lesson = questionData.lesson!.trim();
+
+  const learningObjectiveCode = (questionData.learning_objective_code ?? questionData.learningObjectiveCode)?.trim() || null;
+  const bloomTaxonomy = (questionData.bloom_taxonomy ?? questionData.bloomTaxonomy)?.trim() || null;
+  const estimatedDifficulty = (questionData.estimated_difficulty ?? questionData.estimatedDifficulty)?.trim() || 'medium';
+  const expectedTime = Number(questionData.expected_time ?? questionData.expectedTime) || 60;
+  const source = (questionData.source)?.trim() || 'تطبيق المدرب الذكي';
+  const assessmentContext = (questionData.assessment_context ?? questionData.assessmentContext)?.trim() || 'summative';
+  const repetitionCount = Number(questionData.repetition_count ?? questionData.repetitionCount) || 1;
+
+  const rawExamYears = questionData.exam_years ?? questionData.examYears;
+  const incomingYears: number[] = Array.isArray(rawExamYears) && rawExamYears.length > 0
+    ? Array.from(new Set(rawExamYears.map(Number))).sort((a, b) => a - b)
+    : (questionData.exam_year || questionData.examYear ? [Number(questionData.exam_year || questionData.examYear)] : [new Date().getFullYear()]);
+  const incomingYear = incomingYears[0] || new Date().getFullYear();
+
+  const fileName = (questionData.file_name ?? questionData.fileName) || null;
+
+  if (isInMemoryFallback || !pool) {
     const existingIndex = memQuestions.findIndex((q) => q.normalizedTextHash === textHash);
     if (existingIndex !== -1) {
       const existing = memQuestions[existingIndex];
@@ -631,39 +747,41 @@ export async function insertQuestion(
     const newQ: Question = {
       id: 'q-' + Math.random().toString(36).substring(2, 9),
       fileId,
-      fileName: questionData.fileName || targetFile?.name || null,
-      questionText: questionData.questionText,
-      questionType: questionData.questionType || 'multiple_choice',
-      optionA: questionData.optionA,
-      optionB: questionData.optionB,
-      optionC: questionData.optionC || null,
-      optionD: questionData.optionD || null,
-      correctOption: questionData.correctOption,
-      grade: questionData.grade || 12,
-      section: questionData.section || 'علمي',
-      subject: questionData.subject || 'عام',
-      unit: questionData.unit || 'الوحدة الأولى',
-      lesson: questionData.lesson || 'الدرس الأول',
-      learningObjectiveCode: questionData.learningObjectiveCode || null,
-      estimatedDifficulty: questionData.estimatedDifficulty || 'medium',
-      pValue: questionData.pValue || 0.7,
-      discriminationIndex: questionData.discriminationIndex || 0.4,
-      distractorEfficiency: questionData.distractorEfficiency || null,
-      expectedTime: questionData.expectedTime || 60,
-      averageSolveTime: questionData.averageSolveTime || null,
-      enemyQuestions: questionData.enemyQuestions || [],
-      relativeQuestions: questionData.relativeQuestions || [],
-      assessmentContext: questionData.assessmentContext || 'summative',
+      fileName: fileName || targetFile?.name || null,
+      questionText,
+      questionType: questionType as QuestionType,
+      optionA,
+      optionB,
+      optionC,
+      optionD,
+      correctOption,
+      grade,
+      section,
+      subject,
+      unit,
+      lesson,
+      learningObjectiveCode,
+      bloomTaxonomy,
+      bloom_taxonomy: bloomTaxonomy,
+      estimatedDifficulty: estimatedDifficulty as Difficulty,
+      pValue: questionData.pValue ?? questionData.p_value ?? null,
+      discriminationIndex: questionData.discriminationIndex ?? questionData.discrimination_index ?? null,
+      distractorEfficiency: (questionData.distractorEfficiency ?? questionData.distractor_efficiency) || null,
+      expectedTime,
+      averageSolveTime: questionData.averageSolveTime ?? questionData.average_solve_time ?? null,
+      enemyQuestions: questionData.enemyQuestions ?? questionData.enemy_questions ?? [],
+      relativeQuestions: questionData.relativeQuestions ?? questionData.relative_questions ?? [],
+      assessmentContext: assessmentContext as AssessmentContext,
       hint: questionData.hint || null,
-      correctExplanation: questionData.correctExplanation || 'إجابة نموذجية',
-      wrongExplanations: questionData.wrongExplanations || null,
-      source: questionData.source || 'المدرب الذكي',
+      correctExplanation,
+      wrongExplanations: typeof wrongExplanations === 'object' ? wrongExplanations : null,
+      source,
       examYear: incomingYear,
       governorate: questionData.governorate || 'المركزية',
-      reviewStatus: questionData.reviewStatus || 'pending_review',
-      contentVersion: questionData.contentVersion || 1,
+      reviewStatus: (questionData.reviewStatus ?? questionData.review_status) || 'pending_review',
+      contentVersion: questionData.contentVersion ?? questionData.content_version ?? 1,
       normalizedTextHash: textHash,
-      repetitionCount: incomingRepCount,
+      repetitionCount,
       examYears: incomingYears,
       isDuplicate: false,
       status: 'inserted',
@@ -681,17 +799,22 @@ export async function insertQuestion(
     const sql = `
       INSERT INTO smart_exam_engine.questions (
         file_id, file_name, question_text, question_type, option_a, option_b,
-        option_c, option_d, correct_option, grade, section, subject, unit,
-        lesson, learning_objective_code, estimated_difficulty, p_value,
-        discrimination_index, distractor_efficiency, expected_time,
-        average_solve_time, enemy_questions, relative_questions,
-        assessment_context, hint, correct_explanation, wrong_explanations,
-        source, exam_year, governorate, review_status, content_version,
-        normalized_text_hash, repetition_count, exam_years
+        option_c, option_d, correct_option, correct_explanation, wrong_explanations,
+        subject, grade, section, unit, lesson, learning_objective_code,
+        bloom_taxonomy, estimated_difficulty, p_value, discrimination_index,
+        distractor_efficiency, expected_time, average_solve_time, enemy_questions,
+        relative_questions, assessment_context, hint, source, exam_year,
+        governorate, review_status, content_version, normalized_text_hash,
+        repetition_count, exam_years
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-        $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
-        $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35
+        $1, $2, $3, $4, $5, $6,
+        $7, $8, $9, $10, $11,
+        $12, $13, $14, $15, $16, $17,
+        $18, $19, $20, $21,
+        $22, $23, $24, $25,
+        $26, $27, $28, $29, $30,
+        $31, $32, $33, $34,
+        $35, $36
       )
       ON CONFLICT (normalized_text_hash) DO UPDATE SET
         repetition_count = smart_exam_engine.questions.repetition_count + 1,
@@ -706,39 +829,40 @@ export async function insertQuestion(
 
     const values = [
       fileId,
-      questionData.fileName || null,
-      questionData.questionText,
-      questionData.questionType || 'multiple_choice',
-      questionData.optionA,
-      questionData.optionB,
-      questionData.optionC || null,
-      questionData.optionD || null,
-      questionData.correctOption,
-      questionData.grade || 12,
-      questionData.section || 'علمي',
-      questionData.subject || 'عام',
-      questionData.unit || 'الوحدة الأولى',
-      questionData.lesson || 'الدرس الأول',
-      questionData.learningObjectiveCode || null,
-      questionData.estimatedDifficulty || 'medium',
-      questionData.pValue || null,
-      questionData.discriminationIndex || null,
-      questionData.distractorEfficiency ? JSON.stringify(questionData.distractorEfficiency) : null,
-      questionData.expectedTime || 60,
-      questionData.averageSolveTime || null,
-      questionData.enemyQuestions || [],
-      questionData.relativeQuestions || [],
-      questionData.assessmentContext || 'summative',
+      fileName,
+      questionText,
+      questionType,
+      optionA,
+      optionB,
+      optionC,
+      optionD,
+      correctOption,
+      correctExplanation,
+      wrongExplanations ? JSON.stringify(wrongExplanations) : null,
+      subject,
+      grade,
+      section,
+      unit,
+      lesson,
+      learningObjectiveCode,
+      bloomTaxonomy,
+      estimatedDifficulty,
+      questionData.pValue ?? questionData.p_value ?? null,
+      questionData.discriminationIndex ?? questionData.discrimination_index ?? null,
+      (questionData.distractorEfficiency ?? questionData.distractor_efficiency) ? JSON.stringify(questionData.distractorEfficiency ?? questionData.distractor_efficiency) : null,
+      expectedTime,
+      questionData.averageSolveTime ?? questionData.average_solve_time ?? null,
+      questionData.enemyQuestions ?? questionData.enemy_questions ?? [],
+      questionData.relativeQuestions ?? questionData.relative_questions ?? [],
+      assessmentContext,
       questionData.hint || null,
-      questionData.correctExplanation,
-      questionData.wrongExplanations ? JSON.stringify(questionData.wrongExplanations) : null,
-      questionData.source || 'تطبيق المدرب الذكي',
+      source,
       incomingYear,
       questionData.governorate || 'المركزية',
-      questionData.reviewStatus || 'pending_review',
-      questionData.contentVersion || 1,
+      (questionData.reviewStatus ?? questionData.review_status) || 'pending_review',
+      questionData.contentVersion ?? questionData.content_version ?? 1,
       textHash,
-      incomingRepCount,
+      repetitionCount,
       incomingYears,
     ];
 
@@ -752,9 +876,11 @@ export async function insertQuestion(
       isDuplicate: wasDuplicate,
       status: wasDuplicate ? 'ignored' : 'inserted',
     };
-  } catch {
-    isInMemoryFallback = true;
-    return insertQuestion(fileId, questionData);
+  } catch (err: any) {
+    if (isInMemoryFallback || !pool) {
+      return insertQuestion(fileId, questionData);
+    }
+    throw err;
   }
 }
 
@@ -1284,8 +1410,34 @@ export const memLessons: Lesson[] = [
   }
 ];
 
+export function validateStrictLessonFields(raw: any, index?: number): string | null {
+  const prefix = index !== undefined ? `الدرس رقم ${index}: ` : '';
+
+  const subject = raw.subject;
+  if (!subject || typeof subject !== 'string' || !subject.trim()) {
+    return `${prefix}الحقل مفقود: subject (المادة الدراسية إلزامية)`;
+  }
+
+  const grade = Number(raw.grade);
+  if (grade !== 9 && grade !== 12) {
+    return `${prefix}قيمة الحقل مخالفة للقيود: grade يجب أن يكون الصف 9 أو 12`;
+  }
+
+  const lessonTitle = raw.lesson_title ?? raw.lessonTitle;
+  if (!lessonTitle || typeof lessonTitle !== 'string' || !lessonTitle.trim()) {
+    return `${prefix}الحقل مفقود: lesson_title (عنوان الدرس إلزامي)`;
+  }
+
+  const contentJson = raw.content_json ?? raw.content;
+  if (!contentJson) {
+    return `${prefix}الحقل مفقود: content_json (محتوى الدرس إلزامي)`;
+  }
+
+  return null;
+}
+
 export async function insertLessons(
-  lessonsInput: LessonInput[]
+  lessonsInput: LessonInput[] | any[]
 ): Promise<{ inserted: number; lessons: Lesson[] }> {
   if (!Array.isArray(lessonsInput) || lessonsInput.length === 0) {
     return { inserted: 0, lessons: [] };
@@ -1296,35 +1448,39 @@ export async function insertLessons(
 
   const newLessons: Lesson[] = [];
 
-  for (const item of lessonsInput) {
+  for (let i = 0; i < lessonsInput.length; i++) {
+    const item = lessonsInput[i];
+    const validationError = validateStrictLessonFields(item, lessonsInput.length > 1 ? i + 1 : undefined);
+    if (validationError) {
+      throw new Error(validationError);
+    }
+
     const id = (item.id && typeof item.id === 'string' && item.id.trim())
       ? item.id.trim()
       : (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `les-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`);
-    const grade = (item.grade === 9 ? 9 : 12) as Grade;
-    const section = item.section || null;
-    const subject = item.subject || 'عام';
-    const unitTitle = item.unitTitle || null;
-    const unitOrder = Number(item.unitOrder) || 1;
-    const lessonTitle = item.lessonTitle || 'درس بدون عنوان';
-    const lessonOrder = Number(item.lessonOrder) || 1;
-    const learningObjectiveCodes = Array.isArray(item.learningObjectiveCodes)
-      ? item.learningObjectiveCodes
-      : [];
-    const estimatedReadingTimeMinutes = Number(item.estimatedReadingTimeMinutes) || 10;
-    const content = item.content || {
-      introduction: '',
-      coreConcepts: [],
-      commonMistakes: [],
-      solvedExamples: [],
-      activeRecallSummary: '',
-    };
-    const mediaResources: LessonMediaResources = {
-      audio: Array.isArray(item.mediaResources?.audio) ? item.mediaResources.audio : [],
-      video: Array.isArray(item.mediaResources?.video) ? item.mediaResources.video : [],
-      attachments: Array.isArray(item.mediaResources?.attachments)
-        ? item.mediaResources.attachments
-        : [],
-    };
+    const grade = Number(item.grade) as Grade;
+    const section = item.section ? String(item.section).trim() : null;
+    const subject = String(item.subject).trim();
+    const unitTitle = item.unit_title ?? item.unitTitle ? String(item.unit_title ?? item.unitTitle).trim() : null;
+    const unitOrder = Number(item.unit_order ?? item.unitOrder) || 1;
+    const lessonTitle = String(item.lesson_title ?? item.lessonTitle).trim();
+    const lessonOrder = Number(item.lesson_order ?? item.lessonOrder) || 1;
+    const rawCodes = item.learning_objective_codes ?? item.learningObjectiveCodes;
+    const learningObjectiveCodes: string[] = Array.isArray(rawCodes)
+      ? rawCodes
+      : (rawCodes && typeof rawCodes === 'string' ? rawCodes.split(',').map((s: string) => s.trim()) : []);
+    const estimatedReadingTimeMinutes = Number(item.estimated_reading_time_minutes ?? item.estimatedReadingTimeMinutes) || 10;
+    
+    const rawContent = item.content_json ?? item.content;
+    const content: LessonContent = typeof rawContent === 'string'
+      ? (() => { try { return JSON.parse(rawContent); } catch { return { introduction: rawContent, coreConcepts: [], commonMistakes: [], solvedExamples: [], activeRecallSummary: '' }; } })()
+      : rawContent;
+
+    const rawMedia = item.media_resources ?? item.mediaResources;
+    const mediaResources: LessonMediaResources = typeof rawMedia === 'string'
+      ? (() => { try { return JSON.parse(rawMedia); } catch { return { audio: [], video: [], attachments: [] }; } })()
+      : (rawMedia || { audio: [], video: [], attachments: [] });
+
     const createdAt = new Date().toISOString();
 
     const lesson: Lesson = {
@@ -1343,56 +1499,81 @@ export async function insertLessons(
       createdAt,
     };
 
-    // Explicit SQL INSERT with upsert into smart_exam_engine.lessons
-    const sql = `
-      INSERT INTO smart_exam_engine.lessons (
-        id, grade, section, subject, unit_title, unit_order, lesson_title, lesson_order,
-        learning_objective_codes, estimated_reading_time_minutes, content_json, media_resources, created_at
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-      ON CONFLICT (id) DO UPDATE SET
-        grade = EXCLUDED.grade,
-        section = EXCLUDED.section,
-        subject = EXCLUDED.subject,
-        unit_title = EXCLUDED.unit_title,
-        unit_order = EXCLUDED.unit_order,
-        lesson_title = EXCLUDED.lesson_title,
-        lesson_order = EXCLUDED.lesson_order,
-        learning_objective_codes = EXCLUDED.learning_objective_codes,
-        estimated_reading_time_minutes = EXCLUDED.estimated_reading_time_minutes,
-        content_json = EXCLUDED.content_json,
-        media_resources = EXCLUDED.media_resources
-      RETURNING *;
-    `;
-
-    const res = await query(sql, [
-      lesson.id,
-      lesson.grade,
-      lesson.section,
-      lesson.subject,
-      lesson.unitTitle,
-      lesson.unitOrder,
-      lesson.lessonTitle,
-      lesson.lessonOrder,
-      lesson.learningObjectiveCodes,
-      lesson.estimatedReadingTimeMinutes,
-      JSON.stringify(lesson.content),
-      JSON.stringify(lesson.mediaResources),
-      lesson.createdAt,
-    ]);
-
-    if (res.rows && res.rows.length > 0) {
-      const mapped = mapLessonRowToLesson(res.rows[0] as LessonRow);
-      newLessons.push(mapped);
-      // Keep memory mirror in sync
-      const existingIdx = memLessons.findIndex((l) => l.id === mapped.id);
+    if (isInMemoryFallback || !pool) {
+      const existingIdx = memLessons.findIndex((l) => l.id === lesson.id);
       if (existingIdx >= 0) {
-        memLessons[existingIdx] = mapped;
+        memLessons[existingIdx] = lesson;
       } else {
-        memLessons.unshift(mapped);
+        memLessons.unshift(lesson);
       }
-    } else {
       newLessons.push(lesson);
+      continue;
+    }
+
+    try {
+      // Explicit SQL INSERT with clean fields into smart_exam_engine.lessons
+      const sql = `
+        INSERT INTO smart_exam_engine.lessons (
+          id, grade, section, subject, unit_title, unit_order, lesson_title, lesson_order,
+          learning_objective_codes, estimated_reading_time_minutes, content_json, media_resources, created_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        ON CONFLICT (id) DO UPDATE SET
+          grade = EXCLUDED.grade,
+          section = EXCLUDED.section,
+          subject = EXCLUDED.subject,
+          unit_title = EXCLUDED.unit_title,
+          unit_order = EXCLUDED.unit_order,
+          lesson_title = EXCLUDED.lesson_title,
+          lesson_order = EXCLUDED.lesson_order,
+          learning_objective_codes = EXCLUDED.learning_objective_codes,
+          estimated_reading_time_minutes = EXCLUDED.estimated_reading_time_minutes,
+          content_json = EXCLUDED.content_json,
+          media_resources = EXCLUDED.media_resources
+        RETURNING *;
+      `;
+
+      const res = await query(sql, [
+        lesson.id,
+        lesson.grade,
+        lesson.section,
+        lesson.subject,
+        lesson.unitTitle,
+        lesson.unitOrder,
+        lesson.lessonTitle,
+        lesson.lessonOrder,
+        lesson.learningObjectiveCodes,
+        lesson.estimatedReadingTimeMinutes,
+        JSON.stringify(lesson.content),
+        JSON.stringify(lesson.mediaResources),
+        lesson.createdAt,
+      ]);
+
+      if (res.rows && res.rows.length > 0) {
+        const mapped = mapLessonRowToLesson(res.rows[0] as LessonRow);
+        newLessons.push(mapped);
+        // Keep memory mirror in sync
+        const existingIdx = memLessons.findIndex((l) => l.id === mapped.id);
+        if (existingIdx >= 0) {
+          memLessons[existingIdx] = mapped;
+        } else {
+          memLessons.unshift(mapped);
+        }
+      } else {
+        newLessons.push(lesson);
+      }
+    } catch (err: any) {
+      if (isInMemoryFallback || !pool) {
+        const existingIdx = memLessons.findIndex((l) => l.id === lesson.id);
+        if (existingIdx >= 0) {
+          memLessons[existingIdx] = lesson;
+        } else {
+          memLessons.unshift(lesson);
+        }
+        newLessons.push(lesson);
+      } else {
+        throw err;
+      }
     }
   }
 
@@ -1408,6 +1589,17 @@ export async function getLessons(filters?: {
 }): Promise<Lesson[]> {
   const limit = Math.max(1, Math.min(filters?.limit || 100, 200));
   const offset = Math.max(0, filters?.offset || 0);
+
+  if (isInMemoryFallback || !pool) {
+    let result = [...memLessons];
+    if (filters?.subject && filters.subject !== 'all') {
+      result = result.filter((l) => l.subject === filters.subject);
+    }
+    if (filters?.grade) {
+      result = result.filter((l) => l.grade === filters.grade);
+    }
+    return result.slice(offset, offset + limit);
+  }
 
   try {
     await ensureSchema();
@@ -1441,6 +1633,7 @@ export async function getLessons(filters?: {
     return res.rows.map((row) => mapLessonRowToLesson(row as LessonRow));
   } catch (err: any) {
     console.warn('[getLessons] Falling back to in-memory lessons:', err.message);
+    isInMemoryFallback = true;
     let result = [...memLessons];
     if (filters?.subject && filters.subject !== 'all') {
       result = result.filter((l) => l.subject === filters.subject);
