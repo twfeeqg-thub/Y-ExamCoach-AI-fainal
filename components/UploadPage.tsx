@@ -44,6 +44,7 @@ export const UploadPage: React.FC = () => {
     focusFileId,
     setFocusFileId,
     importJsonQuestions,
+    refreshData,
   } = useApp();
 
   // Component State
@@ -160,31 +161,36 @@ export const UploadPage: React.FC = () => {
     if (!files || files.length === 0) return;
     const file = files[0];
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const content = event.target?.result as string;
-        const parseRes = robustParseJson(content);
-        if (!parseRes.success) {
-          triggerSupportToast({
-            title: 'ملف JSON غير صالح',
-            message: parseRes.errorMessage || 'تعذر تحليل الملف. يرجى التأكد من التنسيق.',
-            type: 'error',
-          });
-          return;
+        let parsedData: any;
+        try {
+          parsedData = JSON.parse(content);
+        } catch (syntaxErr: any) {
+          const parseRes = robustParseJson(content);
+          if (!parseRes.success) {
+            triggerSupportToast({
+              title: 'ملف JSON غير صالح 🔴',
+              message: parseRes.errorMessage || syntaxErr.message || 'تعذر تحليل الملف. يرجى التأكد من صحة التنسيق.',
+              type: 'error',
+            });
+            return;
+          }
+          parsedData = parseRes.data;
+          if (parseRes.repaired) {
+            triggerSupportToast({
+              title: 'تم إصلاح بنية الملف تلقائياً',
+              message: 'تم تصحيح الأخطاء البنائية في ملف JSON بنجاح.',
+              type: 'info',
+            });
+          }
         }
-        const normalized = normalizeQuestionImportPayload(parseRes.data, file.name);
-        if (parseRes.repaired) {
-          triggerSupportToast({
-            title: 'تم إصلاح بنية الملف تلقائياً',
-            message: 'تم تصحيح الأخطاء البنائية والقيم الناقصة في ملف JSON بنجاح.',
-            type: 'info',
-          });
-        }
-        handleJsonImport(normalized, normalized.fileName);
+        await handleJsonImport(parsedData, file.name);
       } catch (error: any) {
         console.error('Error parsing JSON file:', error);
         triggerSupportToast({
-          title: 'ملف JSON غير صالح',
+          title: 'فشل استيراد ملف JSON 🔴',
           message: error?.message || 'تعذر قراءة محتوى الملف.',
           type: 'error',
         });
@@ -198,7 +204,7 @@ export const UploadPage: React.FC = () => {
     setJsonPasteError(null);
     triggerSupportToast({
       title: 'تم إدراج النموذج التجريبي',
-      message: 'يتضمن النموذج بنية أسئلة كاملة تدعم examYears وتكرارات الامتحانات الوزارية.',
+      message: 'يتضمن النموذج بنية أسئلة كاملة متوافقة مع جدول smart_exam_engine.questions في Supabase.',
       type: 'info',
     });
   };
@@ -220,7 +226,7 @@ export const UploadPage: React.FC = () => {
       triggerSupportToast({
         title: result.repaired ? 'تم إصلاح وتنسيق JSON بنجاح' : 'الكود متوافق وسليم',
         message: result.repaired
-          ? 'تم استدراك الفواصل الزائدة والقيم الناقصة (مثل examYears) وتنسيق النص.'
+          ? 'تم استدراك الفواصل الزائدة والقيم وتنسيق النص.'
           : 'بنية JSON ممتازة ومتناسقة تماماً.',
         type: 'success',
       });
@@ -233,52 +239,66 @@ export const UploadPage: React.FC = () => {
     e.preventDefault();
     setJsonPasteError(null);
 
-    const parseRes = robustParseJson(jsonPasteContent);
-    if (!parseRes.success) {
-      console.error('Error parsing pasted JSON:', parseRes.errorMessage);
-      setJsonPasteError(parseRes.errorMessage || 'خطأ في تنسيق JSON. تحقق من الأقواس والقيم.');
-      triggerSupportToast({
-        title: 'نص JSON غير صالح',
-        message: parseRes.errorMessage || 'تعذر تحليل النص. يمكنك النقر على "إصلاح وتنسيق" لتصحيحه.',
-        type: 'error',
-      });
+    if (!jsonPasteContent.trim()) {
+      setJsonPasteError('يرجى لصق كود JSON للأسئلة أولاً.');
       return;
     }
 
+    let parsedData: any;
     try {
-      const normalized = normalizeQuestionImportPayload(
-        parseRes.data,
-        `PastedContent-${new Date().toISOString().slice(0, 10)}.json`
-      );
-
+      parsedData = JSON.parse(jsonPasteContent);
+    } catch (syntaxErr: any) {
+      const parseRes = robustParseJson(jsonPasteContent);
+      if (!parseRes.success) {
+        console.error('Error parsing pasted JSON:', parseRes.errorMessage);
+        const errMessage = parseRes.errorMessage || syntaxErr.message || 'خطأ في تنسيق JSON. تحقق من الأقواس والقيم.';
+        setJsonPasteError(errMessage);
+        triggerSupportToast({
+          title: 'نص JSON غير صالح 🔴',
+          message: errMessage,
+          type: 'error',
+        });
+        return;
+      }
+      parsedData = parseRes.data;
       if (parseRes.repaired) {
         triggerSupportToast({
           title: 'تم إصلاح بنية JSON تلقائياً',
-          message: 'تم تجاوز الأخطاء النحوية (مثل examYears أو الفواصل) واستيراد الأسئلة بنجاح.',
-          type: 'success',
+          message: 'تم تجاوز الأخطاء النحوية في كود JSON بنجاح.',
+          type: 'info',
         });
       }
+    }
 
-      await handleJsonImport(normalized, normalized.fileName);
+    try {
+      await handleJsonImport(
+        parsedData,
+        `PastedContent-${new Date().toISOString().slice(0, 10)}.json`
+      );
       setShowJsonPasteModal(false);
       setJsonPasteContent('');
       setJsonPasteError(null);
     } catch (error: any) {
       console.error('Failed to import pasted questions:', error);
-      triggerSupportToast({
-        title: 'فشل استيراد الأسئلة',
-        message: error?.message || 'حدث خطأ أثناء استيراد الأسئلة.',
-        type: 'error',
-      });
+      setJsonPasteError(error.message || 'فشل إدراج وحفظ الأسئلة في قاعدة البيانات');
     }
   };
 
   const handleJsonImport = async (data: any, fileName: string) => {
-    const normalized = normalizeQuestionImportPayload(data, fileName);
+    // 1. Direct local extraction of questions array (no n8n, no intermediate mock)
+    let questionsList: any[] = [];
+    if (Array.isArray(data)) {
+      questionsList = data;
+    } else if (data && Array.isArray(data.questions)) {
+      questionsList = data.questions;
+    } else if (data && typeof data === 'object') {
+      const normalized = normalizeQuestionImportPayload(data, fileName);
+      questionsList = normalized.questions || [];
+    }
 
-    if (!normalized.questions || !Array.isArray(normalized.questions) || normalized.questions.length === 0) {
+    if (!Array.isArray(questionsList) || questionsList.length === 0) {
       triggerSupportToast({
-        title: 'بنية JSON غير متوافقة',
+        title: 'بنية JSON غير متوافقة 🔴',
         message: 'لم يتم العثور على أي أسئلة صالحة للاستيراد في المحتوى.',
         type: 'error',
       });
@@ -287,25 +307,39 @@ export const UploadPage: React.FC = () => {
 
     setIsSubmitting(true);
     try {
-      const result = await importJsonQuestions({
-        fileName: normalized.fileName,
-        questions: normalized.questions,
-        metadata: normalized.metadata || {},
+      // 2. Direct POST request to /api/questions for immediate Supabase write (Zero n8n forwarding)
+      const res = await fetch('/api/questions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ questions: questionsList }),
       });
 
+      const result = await res.json();
+      if (!res.ok || !result.success) {
+        const errorMsg = result.error || result.fieldError || `فشل إدراج وحفظ الأسئلة (${res.status})`;
+        throw new Error(errorMsg);
+      }
+
+      const count = result.count || (Array.isArray(result.data) ? result.data.length : 1);
+
+      // 3. Explicit success Toast Notification stating exact count and Supabase destination
       triggerSupportToast({
-        title: 'اكتمل استيراد JSON',
-        message: `تم بنجاح إدراج ${result.insertedCount} سؤالاً، والتعامل مع ${result.ignoredCount} سؤالاً مكرراً/محدثاً.`,
+        title: 'تم الحقن المباشر في Supabase بنجاح 🚀',
+        message: `تم بنجاح حفظ وحقن ${count} سؤال في جدول (smart_exam_engine.questions) في قاعدة بيانات Supabase!`,
         type: 'success',
       });
 
+      // 4. Refresh live state
+      await refreshData();
+      return result;
     } catch (error: any) {
       console.error("Failed to import JSON questions:", error);
       triggerSupportToast({
-        title: 'فشل استيراد JSON',
+        title: 'فشل استيراد الأسئلة 🔴',
         message: error.message || 'حدث خطأ غير متوقع أثناء عملية الاستيراد.',
         type: 'error',
       });
+      throw error;
     } finally {
       setIsSubmitting(false);
     }

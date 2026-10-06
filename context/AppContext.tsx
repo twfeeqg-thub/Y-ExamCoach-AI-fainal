@@ -482,116 +482,39 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
   // ---------------------------------------------------------------------------
-  // 3. NEW: JSON Import Action
+  // 3. Direct JSON Import Action (Direct Supabase Write - Zero n8n)
   // ---------------------------------------------------------------------------
   const importJsonQuestions = async (payload: JsonImportInput): Promise<ImportResult> => {
-    addLogMessage('info', 'JsonImport', `بدء استيراد الأسئلة من ملف: ${payload.fileName}`);
+    addLogMessage('info', 'JsonImport', `بدء الحقن المباشر للأسئلة من ملف: ${payload.fileName}`);
     try {
-      // 1. Try server-side API import first
-      const res = await fetch('/api/import', {
+      // 1. Direct POST to /api/questions (inserts directly into smart_exam_engine.questions in Supabase)
+      const res = await fetch('/api/questions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ questions: payload.questions }),
       });
 
-      if (res.ok) {
-        const result = await res.json();
-        if (result.success && result.data) {
-          addLogMessage(
-            'success',
-            'JsonImport',
-            `اكتمل الاستيراد عبر الخادم: ${result.data.insertedCount} سؤال جديد, ${result.data.ignoredCount} مكرر.`
-          );
-          await refreshData();
-          return result.data;
-        }
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || json.fieldError || `فشل إدراج وحفظ الأسئلة (${res.status})`);
       }
 
-      // 2. Offline fallback if server API is unavailable
-      const localFileId = 'f-import-' + Math.random().toString(36).substring(2, 9);
-      const newFile: UploadedFile = {
-        id: localFileId,
-        name: payload.fileName,
-        size: JSON.stringify(payload.questions).length,
-        fileType: 'other',
-        previewUrl: null,
-        grade: (payload.metadata?.grade as any) || '12',
-        section: (payload.metadata?.section as any) || 'علمي',
-        subject: payload.metadata?.subject || 'مستورد',
-        examYear: payload.metadata?.examYear || 2024,
-        governorate: payload.metadata?.governorate || 'المركزية',
-        status: 'completed',
-        progress: 100,
-        step: 'completed',
-        extractedQuestionsCount: payload.questions.length,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-
-      let insertedCount = 0;
-      let ignoredCount = 0;
-      const newMappedQuestions: Question[] = [];
-
-      for (const q of payload.questions) {
-        const qYears = Array.isArray(q.examYears) && q.examYears.length > 0 ? q.examYears : (q.examYear ? [q.examYear] : [2024]);
-        const newQ: Question = {
-          id: 'q-local-' + Math.random().toString(36).substring(2, 9),
-          fileId: localFileId,
-          fileName: payload.fileName,
-          questionText: q.questionText,
-          questionType: q.questionType || 'multiple_choice',
-          optionA: q.optionA,
-          optionB: q.optionB,
-          optionC: q.optionC || null,
-          optionD: q.optionD || null,
-          correctOption: q.correctOption,
-          grade: q.grade || 12,
-          section: q.section || 'علمي',
-          subject: q.subject || 'عام',
-          unit: q.unit || 'الوحدة الأولى',
-          lesson: q.lesson || 'الدرس الأول',
-          learningObjectiveCode: q.learningObjectiveCode || null,
-          estimatedDifficulty: q.estimatedDifficulty || 'medium',
-          pValue: q.pValue || 0.7,
-          discriminationIndex: q.discriminationIndex || 0.4,
-          distractorEfficiency: q.distractorEfficiency || null,
-          expectedTime: q.expectedTime || 60,
-          averageSolveTime: q.averageSolveTime || null,
-          enemyQuestions: q.enemyQuestions || [],
-          relativeQuestions: q.relativeQuestions || [],
-          assessmentContext: q.assessmentContext || 'summative',
-          hint: q.hint || null,
-          correctExplanation: q.correctExplanation || 'إجابة نموذجية',
-          wrongExplanations: q.wrongExplanations || null,
-          source: q.source || 'مستورد من JSON',
-          examYear: qYears[qYears.length - 1],
-          governorate: q.governorate || 'المركزية',
-          reviewStatus: q.reviewStatus || 'approved',
-          contentVersion: 1,
-          normalizedTextHash: 'hash-' + Math.random().toString(36).substring(2, 9),
-          repetitionCount: q.repetitionCount || (qYears.length > 1 ? qYears.length : 1),
-          examYears: qYears,
-          isDuplicate: false,
-          status: 'inserted',
-        };
-        newMappedQuestions.push(newQ);
-        insertedCount++;
-      }
-
-      setFiles((prev) => [newFile, ...prev]);
-      setQuestions((prev) => [...newMappedQuestions, ...prev]);
-      addLogMessage('success', 'JsonImport', `اكتمل الاستيراد محلياً: ${insertedCount} سؤال جديد.`);
-
+      const insertedCount = json.count || (Array.isArray(json.data) ? json.data.length : 1);
+      addLogMessage(
+        'success',
+        'JsonImport',
+        `اكتمل الحقن المباشر في Supabase: ${insertedCount} سؤال في جدول smart_exam_engine.questions.`
+      );
+      await refreshData();
       return {
-        fileId: localFileId,
+        fileId: 'direct-supabase',
         fileName: payload.fileName,
         totalQuestionsInPayload: payload.questions.length,
         insertedCount,
-        ignoredCount,
+        ignoredCount: 0,
       };
-
     } catch (error: any) {
-      addLogMessage('error', 'JsonImport', `فشل استيراد ملف JSON: ${error.message}`);
+      addLogMessage('error', 'JsonImport', `فشل حقن أسئلة JSON: ${error.message}`);
       throw error;
     }
   };

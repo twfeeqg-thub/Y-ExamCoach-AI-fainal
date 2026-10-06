@@ -7,6 +7,7 @@ import { QuestionsPage } from '@/components/QuestionsPage';
 import { SettingsPage } from '@/components/SettingsPage';
 import { AdaptivePracticePage } from '@/components/AdaptivePracticePage';
 import { LessonManagementPage } from '@/components/LessonManagementPage';
+import { SubjectDashboard } from '@/components/SubjectDashboard';
 import { SupportToast, triggerSupportToast } from '@/components/SupportToast';
 import { ParentDashboard } from '@/components/ParentDashboard';
 import { GamificationHeaderBar } from '@/components/Gamification/GamificationHeaderBar';
@@ -32,12 +33,13 @@ import {
   Heart,
   Target,
   BookOpen,
+  GraduationCap,
   Volume2,
   VolumeX,
 } from 'lucide-react';
 
 export default function HomePage() {
-  const [activeTab, setActiveTab] = useState<'upload' | 'questions' | 'lessons' | 'practice' | 'settings'>('upload');
+  const [activeTab, setActiveTab] = useState<'upload' | 'questions' | 'lessons' | 'subjects' | 'practice' | 'settings'>('upload');
   const [isBadgesModalOpen, setIsBadgesModalOpen] = useState<boolean>(false);
   const { stats, settings, updateUserSettings, databaseStatus } = useApp();
   const { soundEnabled, toggleSound } = useSoundPreference();
@@ -127,6 +129,21 @@ export default function HomePage() {
               <span>بنك الأسئلة</span>
               <span className="px-2 py-0.5 rounded-full text-[10px] bg-slate-200 dark:bg-slate-700 font-mono">
                 {stats.totalQuestions}
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('subjects')}
+              className={`px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition cursor-pointer ${
+                activeTab === 'subjects'
+                  ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+              }`}
+            >
+              <GraduationCap className="w-4 h-4" />
+              <span>المواد والصفوف</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[9px] bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-bold">
+                جديد
               </span>
             </button>
 
@@ -221,6 +238,13 @@ export default function HomePage() {
       <main className="flex-1 py-4 md:py-6">
         {activeTab === 'upload' && <UploadPage />}
         {activeTab === 'questions' && <QuestionsPage />}
+        {activeTab === 'subjects' && (
+          <SubjectDashboard
+            onNavigateToPractice={() => setActiveTab('practice')}
+            onNavigateToLessons={() => setActiveTab('lessons')}
+            onNavigateToQuestions={() => setActiveTab('questions')}
+          />
+        )}
         {activeTab === 'lessons' && <LessonManagementPage />}
         {activeTab === 'practice' && <AdaptivePracticePage />}
         {activeTab === 'settings' && <SettingsPage />}
@@ -244,7 +268,19 @@ export default function HomePage() {
               </span>
             )}
           </div>
-          <span className="text-[11px]">الرفع والملفات</span>
+          <span className="text-[11px]">الرفع</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('subjects')}
+          className={`flex-1 py-2 px-1 rounded-xl flex flex-col items-center justify-center gap-1 min-h-[48px] active:scale-95 transition ${
+            activeTab === 'subjects'
+              ? 'text-blue-600 dark:text-blue-400 font-bold bg-blue-50 dark:bg-blue-950/60'
+              : 'text-slate-500 dark:text-slate-400 hover:text-slate-800'
+          }`}
+        >
+          <GraduationCap className="w-5 h-5" />
+          <span className="text-[11px]">المواد</span>
         </button>
 
         <button

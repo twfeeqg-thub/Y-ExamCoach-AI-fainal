@@ -22,7 +22,9 @@ import {
   Layers,
   Heart,
   Database,
+  FileJson,
 } from 'lucide-react';
+import { QuestionUploadModal } from './QuestionUploadModal';
 
 export const QuestionsPage: React.FC = () => {
   const {
@@ -45,6 +47,7 @@ export const QuestionsPage: React.FC = () => {
 
   // Add Question Modal State
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
+  const [showJsonImportModal, setShowJsonImportModal] = useState<boolean>(false);
   const [newQuestion, setNewQuestion] = useState<QuestionInput>({
     questionText: '',
     optionA: '',
@@ -160,6 +163,14 @@ export const QuestionsPage: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => setShowJsonImportModal(true)}
+            className="flex-1 md:flex-initial px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs md:text-sm rounded-xl flex items-center justify-center gap-2 shadow-sm transition active:scale-95 min-h-[44px]"
+          >
+            <FileJson className="w-4 h-4" />
+            <span>استيراد JSON مباشر</span>
+          </button>
+
           <button
             onClick={() => setShowAddModal(true)}
             className="flex-1 md:flex-initial px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs md:text-sm rounded-xl flex items-center justify-center gap-2 shadow-sm transition active:scale-95 min-h-[44px]"
@@ -470,6 +481,12 @@ export const QuestionsPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Direct JSON Import Modal */}
+      <QuestionUploadModal
+        isOpen={showJsonImportModal}
+        onClose={() => setShowJsonImportModal(false)}
+      />
     </div>
   );
 };
