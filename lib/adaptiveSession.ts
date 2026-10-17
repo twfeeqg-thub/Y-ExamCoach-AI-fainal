@@ -162,7 +162,10 @@ export function useAdaptiveSession() {
   const questionsRef = useRef<Question[]>(questions);
   const dbStatusRef = useRef<'online' | 'offline' | 'checking'>(databaseStatus);
   const syncLockRef = useRef<boolean>(false);
+  const isRetrainRef = useRef<boolean>(false);
+  const profileRef = useRef<StudentProfile | null>(null);
 
+  profileRef.current = profile;
   subjectRef.current = subjectCode;
   cacheRef.current = questionCache;
   pendingRef.current = pendingQueue;
@@ -206,7 +209,10 @@ export function useAdaptiveSession() {
       answeredIdsRef.current = new Set(storedState.answeredQuestionIds || []);
       usedIdsRef.current = new Set(storedState.answeredQuestionIds || []);
     }
-  }, []);
+
+    // Unify mastery with server source
+    syncMasteryWithServer(sid);
+  }, [syncMasteryWithServer]);
 
   // Persist session state whenever core counters change
   useEffect(() => {
@@ -290,15 +296,58 @@ export function useAdaptiveSession() {
   }, []);
 
   // -------------------------------------------------------------------------
+  // Mastery Synchronization (authoritative server source -> local state)
+  // -------------------------------------------------------------------------
+  const syncMasteryWithServer = useCallback(async (sid?: string): Promise<void> => {
+    const targetSid = sid || studentIdRef.current;
+    if (!targetSid || dbStatusRef.current !== 'online') return;
+    try {
+      const res = await fetch(
+        `/api/student/mastery?studentId=${encodeURIComponent(targetSid)}&subjectCode=${encodeURIComponent(subjectRef.current)}`
+      );
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        setMasteryByObjective((prev) => {
+          const updated = { ...prev };
+          for (const item of json.data) {
+            if (item.learningObjectiveCode) {
+              updated[item.learningObjectiveCode] = {
+                masteryScore: Number(item.masteryScore),
+                consecutiveCorrect: item.consecutiveCorrect ?? 0,
+              };
+            }
+          }
+          return updated;
+        });
+      }
+    } catch {
+      // Safe offline fallback
+    }
+  }, []);
+
+  const buildQuestionQueryUrl = (sid: string): string => {
+    const params = new URLSearchParams({
+      studentId: sid,
+      subjectCode: subjectRef.current,
+    });
+    const prof = profileRef.current;
+    if (prof?.grade) params.set('grade', prof.grade.toString());
+    if (prof?.section) params.set('section', prof.section);
+    if (isRetrainRef.current) params.set('allowRetrain', 'true');
+    if (usedIdsRef.current.size > 0) {
+      params.set('excludeIds', Array.from(usedIdsRef.current).join(','));
+    }
+    return `/api/student/next-question?${params.toString()}`;
+  };
+
+  // -------------------------------------------------------------------------
   // Cache Management
   // -------------------------------------------------------------------------
   const prefetchCache = useCallback(async (): Promise<void> => {
     const sid = studentIdRef.current;
     if (!sid) return;
     try {
-      const res = await fetch(
-        `/api/student/next-question?studentId=${encodeURIComponent(sid)}&subjectCode=${encodeURIComponent(subjectRef.current)}`
-      );
+      const res = await fetch(buildQuestionQueryUrl(sid));
       const json = await res.json();
       if (json.success && json.data) {
         const q = json.data as Question;
@@ -330,9 +379,7 @@ export function useAdaptiveSession() {
 
       if (isOnline) {
         try {
-          const res = await fetch(
-            `/api/student/next-question?studentId=${encodeURIComponent(sid)}&subjectCode=${encodeURIComponent(subjectRef.current)}`
-          );
+          const res = await fetch(buildQuestionQueryUrl(sid));
           const json = await res.json();
           if (json.success && json.data) nextQuestion = json.data as Question;
         } catch {
@@ -347,13 +394,29 @@ export function useAdaptiveSession() {
         nextQuestion = cacheRef.current.find((q) => !usedIdsRef.current.has(q.id)) ?? null;
       }
 
-      // Offline last-resort fallback: local (already-loaded) question bank
+      // Offline last-resort fallback: local (already-loaded) question bank respecting grade, section, and subject
       if (!nextQuestion) {
+        const prof = profileRef.current;
         nextQuestion =
           questionsRef.current.find(
             (q) =>
               q.subject === subjectRef.current &&
+              (prof?.grade ? q.grade === prof.grade : true) &&
+              (!prof?.section || prof.section === 'عام' || q.section === prof.section || q.section === 'عام') &&
               q.learningObjectiveCode !== null &&
+              !usedIdsRef.current.has(q.id)
+          ) ?? null;
+      }
+
+      // Offline retraining fallback: if question bank was exhausted or retraining, recycle matching questions
+      if (!nextQuestion && isRetrainRef.current) {
+        const prof = profileRef.current;
+        nextQuestion =
+          questionsRef.current.find(
+            (q) =>
+              q.subject === subjectRef.current &&
+              (prof?.grade ? q.grade === prof.grade : true) &&
+              (!prof?.section || prof.section === 'عام' || q.section === prof.section || q.section === 'عام') &&
               !usedIdsRef.current.has(q.id)
           ) ?? null;
       }
@@ -378,10 +441,40 @@ export function useAdaptiveSession() {
       setIsStarting(true);
       setSubjectCode(subject);
       subjectRef.current = subject;
+      if (!currentQuestionRef.current && answeredCount > 0) {
+        isRetrainRef.current = true;
+        usedIdsRef.current.clear();
+        setAnsweredCount(0);
+      }
       trackSessionStart(new Date().toISOString());
+      if (studentIdRef.current && dbStatusRef.current === 'online') {
+        syncMasteryWithServer(studentIdRef.current);
+      }
       await loadNext({ initial: true });
     },
-    [loadNext]
+    [loadNext, syncMasteryWithServer, answeredCount]
+  );
+
+  const restartSession = useCallback(
+    async (newSubject?: string, newTarget?: number): Promise<void> => {
+      setIsStarting(true);
+      const targetSubject = newSubject || subjectRef.current;
+      setSubjectCode(targetSubject);
+      subjectRef.current = targetSubject;
+      if (typeof newTarget === 'number' && newTarget > 0) {
+        setSessionTarget(newTarget);
+      }
+      setAnsweredCount(0);
+      usedIdsRef.current.clear();
+      isRetrainRef.current = true;
+      trackSessionStart(new Date().toISOString());
+
+      if (studentIdRef.current && dbStatusRef.current === 'online') {
+        await syncMasteryWithServer(studentIdRef.current);
+      }
+      await loadNext({ initial: true });
+    },
+    [loadNext, syncMasteryWithServer]
   );
 
   // -------------------------------------------------------------------------
@@ -475,7 +568,19 @@ export function useAdaptiveSession() {
             }),
           });
           const json = await res.json();
-          if (json.success) continue;
+          if (json.success) {
+            if (json.data?.mastery?.learningObjectiveCode) {
+              const sMastery = json.data.mastery;
+              setMasteryByObjective((prev) => ({
+                ...prev,
+                [sMastery.learningObjectiveCode]: {
+                  masteryScore: Number(sMastery.masteryScore),
+                  consecutiveCorrect: sMastery.consecutiveCorrect ?? 0,
+                },
+              }));
+            }
+            continue;
+          }
           remaining.push({ ...p, syncAttemptedAt: new Date().toISOString() });
         } catch {
           remaining.push({ ...p, syncAttemptedAt: new Date().toISOString() });
@@ -523,18 +628,24 @@ export function useAdaptiveSession() {
     const handleOnline = () => {
       if (dbStatusRef.current === 'online') {
         flushPending();
+        if (studentIdRef.current) {
+          syncMasteryWithServer(studentIdRef.current);
+        }
       }
     };
     window.addEventListener('online', handleOnline);
     return () => window.removeEventListener('online', handleOnline);
-  }, [flushPending]);
+  }, [flushPending, syncMasteryWithServer]);
 
   useEffect(() => {
     if (databaseStatus === 'online') {
       flushPending();
+      if (studentIdRef.current) {
+        syncMasteryWithServer(studentIdRef.current);
+      }
       if (!currentQuestionRef.current) loadNext();
     }
-  }, [databaseStatus, flushPending, loadNext]);
+  }, [databaseStatus, flushPending, loadNext, syncMasteryWithServer]);
 
   return {
     studentId,
@@ -545,6 +656,7 @@ export function useAdaptiveSession() {
     questionCache,
     answeredCount,
     sessionTarget,
+    setSessionTarget,
     masteryByObjective,
     isStarting,
     isSyncing,
@@ -552,6 +664,8 @@ export function useAdaptiveSession() {
     databaseStatus,
     saveProfile,
     startSession,
+    restartSession,
+    syncMasteryWithServer,
     answer,
     requestNext,
     flushPending,

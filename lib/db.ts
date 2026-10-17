@@ -1203,19 +1203,136 @@ export async function recordStudentResponse(
   }
 }
 
+export async function getStudentProfile(studentId: string): Promise<StudentProfile | null> {
+  if (isInMemoryFallback) {
+    return memStudentProfiles.find((p) => p.id === studentId) || null;
+  }
+  try {
+    await ensureSchema();
+    const res = await query(
+      `SELECT * FROM smart_exam_engine.student_profiles WHERE id = $1 LIMIT 1;`,
+      [studentId]
+    );
+    if (res.rows && res.rows.length > 0) {
+      const row = res.rows[0];
+      return {
+        id: row.id,
+        grade: row.grade,
+        section: row.section,
+        governorate: row.governorate,
+        targetSubject: row.target_subject,
+        createdAt: row.created_at,
+      };
+    }
+    return null;
+  } catch {
+    isInMemoryFallback = true;
+    return memStudentProfiles.find((p) => p.id === studentId) || null;
+  }
+}
+
+export async function getStudentMasteryStates(
+  studentId: string,
+  subjectCode?: string
+): Promise<MasteryState[]> {
+  if (isInMemoryFallback) {
+    let list = memMasteryStates.filter((m) => m.studentId === studentId);
+    if (subjectCode) {
+      const subjectObjectiveCodes = new Set(
+        memQuestions
+          .filter((q) => q.subject === subjectCode && q.learningObjectiveCode)
+          .map((q) => q.learningObjectiveCode!)
+      );
+      if (subjectObjectiveCodes.size > 0) {
+        list = list.filter((m) => subjectObjectiveCodes.has(m.learningObjectiveCode));
+      }
+    }
+    return list;
+  }
+
+  try {
+    await ensureSchema();
+    let sql = `
+      SELECT m.*
+      FROM smart_exam_engine.mastery_states m
+      WHERE m.student_id = $1
+    `;
+    const params: any[] = [studentId];
+    if (subjectCode) {
+      sql += `
+        AND m.learning_objective_code IN (
+          SELECT DISTINCT learning_objective_code
+          FROM smart_exam_engine.questions
+          WHERE subject = $2 AND learning_objective_code IS NOT NULL
+        )
+      `;
+      params.push(subjectCode);
+    }
+    sql += ` ORDER BY m.last_evaluated_at DESC;`;
+    const res = await query(sql, params);
+    return res.rows.map((row: any) => ({
+      id: row.id,
+      studentId: row.student_id,
+      learningObjectiveCode: row.learning_objective_code,
+      masteryScore: Number(row.mastery_score),
+      consecutiveCorrect: row.consecutive_correct,
+      lastEvaluatedAt: row.last_evaluated_at,
+    }));
+  } catch {
+    isInMemoryFallback = true;
+    return getStudentMasteryStates(studentId, subjectCode);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Adaptive Engine - Recommended Question Selection
 // ---------------------------------------------------------------------------
 
+export interface RecommendedQuestionOptions {
+  grade?: number | null;
+  section?: string | null;
+  allowRetrain?: boolean;
+  excludeQuestionIds?: string[];
+}
+
 export async function getRecommendedQuestion(
   studentId: string,
-  subjectCode: string
+  subjectCode: string,
+  options?: RecommendedQuestionOptions
 ): Promise<Question | null> {
-  if (isInMemoryFallback) {
-    const answeredIds = memStudentResponses
-      .filter((r) => r.studentId === studentId)
-      .map((r) => r.questionId);
+  let grade = options?.grade;
+  let section = options?.section;
+  const allowRetrain = options?.allowRetrain ?? false;
+  const currentSessionExcluded = options?.excludeQuestionIds || [];
 
+  if (isInMemoryFallback) {
+    if (!grade || !section) {
+      const p = memStudentProfiles.find((item) => item.id === studentId);
+      if (p) {
+        if (!grade) grade = p.grade;
+        if (!section) section = p.section;
+      }
+    }
+
+    const answeredIds = allowRetrain
+      ? currentSessionExcluded
+      : Array.from(
+          new Set([
+            ...memStudentResponses.filter((r) => r.studentId === studentId).map((r) => r.questionId),
+            ...currentSessionExcluded,
+          ])
+        );
+
+    const matchesFilters = (q: Question) => {
+      if (q.subject !== subjectCode) return false;
+      if (grade && q.grade !== grade) return false;
+      if (section && section !== 'عام' && q.section && q.section !== 'عام' && q.section !== section) {
+        return false;
+      }
+      return true;
+    };
+
+    // 1. Objectives with masteryScore < 80, sorted by lowest score
     const targets = memMasteryStates
       .filter((m) => m.studentId === studentId && m.masteryScore < 80)
       .sort((a, b) => a.masteryScore - b.masteryScore);
@@ -1223,63 +1340,116 @@ export async function getRecommendedQuestion(
     for (const target of targets) {
       const candidate = memQuestions.find(
         (q) =>
-          q.subject === subjectCode &&
+          matchesFilters(q) &&
           q.learningObjectiveCode === target.learningObjectiveCode &&
           !answeredIds.includes(q.id)
       );
       if (candidate) return candidate;
     }
 
-    // Cold-start fallback: return first un-answered question for this subject
+    // 2. Unanswered question for this subject, grade, section
     const unAnswered = memQuestions.find(
-      (q) => q.subject === subjectCode && !answeredIds.includes(q.id)
+      (q) => matchesFilters(q) && !answeredIds.includes(q.id)
     );
     if (unAnswered) return unAnswered;
+
+    // 3. Retrain / session boundary handling: if all questions have been answered or retraining is requested,
+    // pick questions matching grade, section & subject that were not answered in the current session:
+    const retrainCandidate = memQuestions.find(
+      (q) => matchesFilters(q) && !currentSessionExcluded.includes(q.id)
+    );
+    if (retrainCandidate) return retrainCandidate;
 
     return null;
   }
 
   try {
     await ensureSchema();
-    const sql = `
-      SELECT q.*
-      FROM smart_exam_engine.questions q
-      JOIN smart_exam_engine.mastery_states m
-        ON m.learning_objective_code = q.learning_objective_code
-      WHERE m.student_id = $1
-        AND q.subject = $2
-        AND m.mastery_score < 80.00
-        AND q.id NOT IN (
-          SELECT question_id FROM smart_exam_engine.student_responses WHERE student_id = $1
-        )
-      ORDER BY m.mastery_score ASC, q.estimated_difficulty ASC
-      LIMIT 1;
-    `;
-    const res = await query(sql, [studentId, subjectCode]);
-    if (res.rowCount && res.rowCount > 0) {
-      return mapQuestionRowToQuestion(res.rows[0] as QuestionRow);
+
+    // If grade or section wasn't supplied, check student profile
+    if (!grade || !section) {
+      const pRes = await query(
+        `SELECT grade, section FROM smart_exam_engine.student_profiles WHERE id = $1 LIMIT 1;`,
+        [studentId]
+      );
+      if (pRes.rowCount && pRes.rowCount > 0) {
+        if (!grade) grade = pRes.rows[0].grade;
+        if (!section) section = pRes.rows[0].section;
+      }
     }
 
-    // Cold start fallback in PostgreSQL mode:
-    const fallbackSql = `
+    const targetGrade = grade || null;
+    const targetSection = section && section !== 'عام' ? section : null;
+    const excludedIds = currentSessionExcluded.length > 0 ? currentSessionExcluded : null;
+
+    if (!allowRetrain) {
+      // Step 1: Weak mastery question matching grade/section/subject
+      const sql1 = `
+        SELECT q.*
+        FROM smart_exam_engine.questions q
+        JOIN smart_exam_engine.mastery_states m
+          ON m.learning_objective_code = q.learning_objective_code
+        WHERE m.student_id = $1
+          AND q.subject = $2
+          AND ($3::int IS NULL OR q.grade = $3)
+          AND ($4::text IS NULL OR q.section = $4 OR q.section = 'عام')
+          AND m.mastery_score < 80.00
+          AND q.id NOT IN (
+            SELECT question_id FROM smart_exam_engine.student_responses WHERE student_id = $1
+          )
+          AND ($5::text[] IS NULL OR NOT (q.id = ANY($5::text[])))
+        ORDER BY m.mastery_score ASC, q.estimated_difficulty ASC
+        LIMIT 1;
+      `;
+      const res1 = await query(sql1, [studentId, subjectCode, targetGrade, targetSection, excludedIds]);
+      if (res1.rowCount && res1.rowCount > 0) {
+        return mapQuestionRowToQuestion(res1.rows[0] as QuestionRow);
+      }
+
+      // Step 2: Unanswered questions matching grade/section/subject
+      const sql2 = `
+        SELECT q.*
+        FROM smart_exam_engine.questions q
+        WHERE q.subject = $2
+          AND ($3::int IS NULL OR q.grade = $3)
+          AND ($4::text IS NULL OR q.section = $4 OR q.section = 'عام')
+          AND q.id NOT IN (
+            SELECT question_id FROM smart_exam_engine.student_responses WHERE student_id = $1
+          )
+          AND ($5::text[] IS NULL OR NOT (q.id = ANY($5::text[])))
+        ORDER BY q.estimated_difficulty ASC, q.created_at ASC
+        LIMIT 1;
+      `;
+      const res2 = await query(sql2, [studentId, subjectCode, targetGrade, targetSection, excludedIds]);
+      if (res2.rowCount && res2.rowCount > 0) {
+        return mapQuestionRowToQuestion(res2.rows[0] as QuestionRow);
+      }
+    }
+
+    // Step 3: Retraining or question pool exhaustion fallback:
+    // Pick questions matching grade/section/subject, prioritizing lowest mastery,
+    // excluding only questions already seen in the current active session:
+    const sqlRetrain = `
       SELECT q.*
       FROM smart_exam_engine.questions q
+      LEFT JOIN smart_exam_engine.mastery_states m
+        ON m.learning_objective_code = q.learning_objective_code AND m.student_id = $1
       WHERE q.subject = $2
-        AND q.id NOT IN (
-          SELECT question_id FROM smart_exam_engine.student_responses WHERE student_id = $1
-        )
-      ORDER BY q.estimated_difficulty ASC, q.created_at ASC
+        AND ($3::int IS NULL OR q.grade = $3)
+        AND ($4::text IS NULL OR q.section = $4 OR q.section = 'عام')
+        AND ($5::text[] IS NULL OR NOT (q.id = ANY($5::text[])))
+      ORDER BY COALESCE(m.mastery_score, 0) ASC, q.estimated_difficulty ASC, q.created_at ASC
       LIMIT 1;
     `;
-    const fallbackRes = await query(fallbackSql, [studentId, subjectCode]);
-    if (fallbackRes.rowCount && fallbackRes.rowCount > 0) {
-      return mapQuestionRowToQuestion(fallbackRes.rows[0] as QuestionRow);
+    const resRetrain = await query(sqlRetrain, [studentId, subjectCode, targetGrade, targetSection, excludedIds]);
+    if (resRetrain.rowCount && resRetrain.rowCount > 0) {
+      return mapQuestionRowToQuestion(resRetrain.rows[0] as QuestionRow);
     }
 
     return null;
   } catch {
     isInMemoryFallback = true;
-    return getRecommendedQuestion(studentId, subjectCode);
+    return getRecommendedQuestion(studentId, subjectCode, options);
   }
 }
 

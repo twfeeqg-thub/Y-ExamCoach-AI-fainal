@@ -14,13 +14,27 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const question = await getRecommendedQuestion(studentId, subjectCode);
+    const gradeParam = searchParams.get('grade');
+    const grade = gradeParam ? parseInt(gradeParam, 10) : undefined;
+    const section = searchParams.get('section') || undefined;
+    const allowRetrain = searchParams.get('allowRetrain') === 'true';
+    const excludeIdsParam = searchParams.get('excludeIds');
+    const excludeQuestionIds = excludeIdsParam
+      ? excludeIdsParam.split(',').map((s) => s.trim()).filter(Boolean)
+      : undefined;
+
+    const question = await getRecommendedQuestion(studentId, subjectCode, {
+      grade: !isNaN(grade as number) ? grade : undefined,
+      section,
+      allowRetrain,
+      excludeQuestionIds,
+    });
 
     if (!question) {
       return NextResponse.json({
         success: true,
         data: null,
-        message: 'No recommended question available. The student has mastered all targeted objectives or has no tracked mastery yet.',
+        message: 'No recommended question available for the given criteria.',
       });
     }
 
